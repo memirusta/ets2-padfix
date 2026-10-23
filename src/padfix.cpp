@@ -264,10 +264,14 @@ void update_device(device_data_t &data)
 	}
 
 	const padfix_state_t &s = data.snapshot;
+	// XInput reports stick up as positive, the game's own gamepad devices as
+	// negative; flip Y so look up/down behaves like with those devices.
+	const float stick_ly = normalize_stick(s.thumb_ly);
+	const float stick_ry = normalize_stick(s.thumb_ry);
 	data.axes[AXIS_LX] = normalize_stick(s.thumb_lx);
-	data.axes[AXIS_LY] = normalize_stick(s.thumb_ly);
+	data.axes[AXIS_LY] = -stick_ly;
 	data.axes[AXIS_RX] = normalize_stick(s.thumb_rx);
-	data.axes[AXIS_RY] = normalize_stick(s.thumb_ry);
+	data.axes[AXIS_RY] = -stick_ry;
 	data.axes[AXIS_LT] = static_cast<float>(s.left_trigger) / 255.0f;
 	data.axes[AXIS_RT] = static_cast<float>(s.right_trigger) / 255.0f;
 
@@ -276,12 +280,12 @@ void update_device(device_data_t &data)
 	}
 	data.buttons[BUTTON_LT_PRESS] = s.left_trigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD;
 	data.buttons[BUTTON_RT_PRESS] = s.right_trigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD;
-	data.buttons[BUTTON_LSTICK_UP] = data.axes[AXIS_LY] > STICK_BUTTON_THRESHOLD;
-	data.buttons[BUTTON_LSTICK_DOWN] = data.axes[AXIS_LY] < -STICK_BUTTON_THRESHOLD;
+	data.buttons[BUTTON_LSTICK_UP] = stick_ly > STICK_BUTTON_THRESHOLD;
+	data.buttons[BUTTON_LSTICK_DOWN] = stick_ly < -STICK_BUTTON_THRESHOLD;
 	data.buttons[BUTTON_LSTICK_LEFT] = data.axes[AXIS_LX] < -STICK_BUTTON_THRESHOLD;
 	data.buttons[BUTTON_LSTICK_RIGHT] = data.axes[AXIS_LX] > STICK_BUTTON_THRESHOLD;
-	data.buttons[BUTTON_RSTICK_UP] = data.axes[AXIS_RY] > STICK_BUTTON_THRESHOLD;
-	data.buttons[BUTTON_RSTICK_DOWN] = data.axes[AXIS_RY] < -STICK_BUTTON_THRESHOLD;
+	data.buttons[BUTTON_RSTICK_UP] = stick_ry > STICK_BUTTON_THRESHOLD;
+	data.buttons[BUTTON_RSTICK_DOWN] = stick_ry < -STICK_BUTTON_THRESHOLD;
 	data.buttons[BUTTON_RSTICK_LEFT] = data.axes[AXIS_RX] < -STICK_BUTTON_THRESHOLD;
 	data.buttons[BUTTON_RSTICK_RIGHT] = data.axes[AXIS_RX] > STICK_BUTTON_THRESHOLD;
 

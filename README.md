@@ -27,7 +27,7 @@ gamepad --XInput--> padfix_helper.exe --shared memory--> padfix.dll --SCS Input 
 
 | Type | Inputs |
 |---|---|
-| Axes | `lx`, `ly`, `rx`, `ry` (sticks, -1..1, up/right positive), `lt`, `rt` (triggers, 0..1) |
+| Axes | `lx`, `ly`, `rx`, `ry` (sticks, -1..1; right and down are positive, like the game's own gamepad devices), `lt`, `rt` (triggers, 0..1) |
 | Buttons | `a`, `b`, `x`, `y`, `lb`, `rb`, `back`, `start`, `ls`, `rs` (stick clicks) |
 | D-pad | `dpad_up`, `dpad_down`, `dpad_left`, `dpad_right` |
 | Triggers/sticks as buttons | `lt_press`, `rt_press`, `lstick_up/down/left/right`, `rstick_up/down/left/right` |
@@ -81,7 +81,7 @@ Requires Visual Studio 2022 or later with "Desktop development with C++".
 
 ```
 build.bat                                          build\padfix.dll and build\padfix_helper.exe
-powershell -File make_release.ps1 -Version 1.0.1   dist\padfix-1.0.1.zip
+powershell -File make_release.ps1 -Version 1.0.2   dist\padfix-1.0.2.zip
 ```
 
 Development tools (`tools/`):
