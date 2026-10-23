@@ -375,7 +375,7 @@ SCSAPI_RESULT scs_input_init(const scs_u32_t version, const scs_input_init_param
 	scs_input_device_t device_info;
 	memset(&device_info, 0, sizeof(device_info));
 	device_info.name = "padfix";
-	device_info.display_name = "Sabit Gamepad";
+	device_info.display_name = "Stable Gamepad";
 	device_info.type = SCS_INPUT_DEVICE_TYPE_generic;
 	device_info.input_count = AXIS_COUNT + BUTTON_COUNT;
 	device_info.inputs = INPUTS;

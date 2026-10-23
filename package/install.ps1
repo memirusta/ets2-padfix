@@ -1,13 +1,14 @@
 ﻿<#
-  padfix kurulum betiği.
+  padfix installer.
 
-  Oyunu Steam kütüphanelerinde bulur, eklentiyi bin\win_x64\plugins klasörüne
-  kopyalar ve "Sabit Gamepad" oyunun kara listesindeyse beyaz listeye alır.
+  Finds the game in your Steam libraries, copies the plugin into
+  bin\win_x64\plugins and, if the game has blacklisted "Stable Gamepad",
+  moves it to the whitelist.
 
-  Kullanım:
-    install.bat                          Kurar
+  Usage:
+    install.bat                          Install
     install.bat -GameDir "D:\...\Euro Truck Simulator 2"
-    uninstall.bat                        Kaldırır
+    uninstall.bat                        Uninstall
 #>
 param(
     [switch]$Uninstall,
@@ -61,8 +62,8 @@ function Find-Installs {
 
 $installs = @(Find-Installs)
 if ($installs.Count -eq 0) {
-    Write-Host 'Oyun bulunamadı.' -ForegroundColor Red
-    Write-Host 'Oyun klasörünü kendin ver:  install.bat -GameDir "D:\SteamLibrary\steamapps\common\Euro Truck Simulator 2"'
+    Write-Host 'Game not found.' -ForegroundColor Red
+    Write-Host 'Pass the game folder yourself:  install.bat -GameDir "D:\SteamLibrary\steamapps\common\Euro Truck Simulator 2"'
     exit 1
 }
 
@@ -75,7 +76,7 @@ foreach ($install in $installs) {
     Write-Host "== $name ($($install.Dir))" -ForegroundColor Cyan
 
     if (Get-Process -Name $install.Game.Exe -ErrorAction SilentlyContinue) {
-        Write-Host "  $name açık. Önce oyunu kapat, sonra tekrar çalıştır." -ForegroundColor Red
+        Write-Host "  $name is running. Close the game first, then run this again." -ForegroundColor Red
         $failed = $true
         continue
     }
@@ -88,15 +89,15 @@ foreach ($install in $installs) {
     if ($Uninstall) {
         Remove-Item -LiteralPath $dll -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $helperDir -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host '  padfix kaldırıldı.' -ForegroundColor Green
-        Write-Host '  Kontrollerini oyunda tekrar kendi gamepad''ine atamayı unutma.'
+        Write-Host '  padfix removed.' -ForegroundColor Green
+        Write-Host '  Remember to bind your controls to your own gamepad again in the game.'
         continue
     }
 
     New-Item -ItemType Directory -Force -Path $helperDir | Out-Null
     Copy-Item -LiteralPath (Join-Path $here 'files\padfix.dll') -Destination $dll -Force
     Copy-Item -LiteralPath (Join-Path $here 'files\padfix\padfix_helper.exe') -Destination (Join-Path $helperDir 'padfix_helper.exe') -Force
-    Write-Host '  Eklenti kopyalandı.' -ForegroundColor Green
+    Write-Host '  Plugin copied.' -ForegroundColor Green
 
     # The game sometimes hides the device in the controls menu; the helper fixes that.
     $globalControls = Join-Path $documents "$name\global_controls.sii"
@@ -104,19 +105,19 @@ foreach ($install in $installs) {
         $helper = Join-Path $helperDir 'padfix_helper.exe'
         $code = (Start-Process -FilePath $helper -ArgumentList '--fix-whitelist', "`"$globalControls`"" -Wait -PassThru).ExitCode
         switch ($code) {
-            0 { Write-Host '  Sabit Gamepad kara listede değil.' }
-            2 { Write-Host '  Sabit Gamepad kara listeden çıkarıldı, beyaz listeye alındı.' -ForegroundColor Green }
-            default { Write-Host '  global_controls.sii okunamadı, bu adım atlandı.' -ForegroundColor Yellow }
+            0 { Write-Host '  Stable Gamepad is not blacklisted.' }
+            2 { Write-Host '  Stable Gamepad was removed from the blacklist and whitelisted.' -ForegroundColor Green }
+            default { Write-Host '  Could not read global_controls.sii, skipped this step.' -ForegroundColor Yellow }
         }
     }
 }
 
 if (-not $Uninstall) {
     Write-Host ''
-    Write-Host 'Sonraki adımlar:' -ForegroundColor Cyan
-    Write-Host '  1. Steam''de oyunun Özellikler > Kontrolcü ayarından Steam Input''u kapat.'
-    Write-Host '  2. Oyunu aç, "gelişmiş SDK özellikleri" uyarısında devam et.'
-    Write-Host '  3. Seçenekler > Kontroller > Giriş türü: "Klavye + Sabit Gamepad" seç ve tuşlarını ata.'
+    Write-Host 'Next steps:' -ForegroundColor Cyan
+    Write-Host '  1. In Steam, open the game''s Properties > Controller and disable Steam Input.'
+    Write-Host '  2. Start the game and continue past the "advanced SDK features" warning.'
+    Write-Host '  3. Options > Controls > Input type: choose "Keyboard + Stable Gamepad" and bind your buttons.'
 }
 
 if ($failed) {

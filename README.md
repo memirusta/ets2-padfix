@@ -1,94 +1,93 @@
-# padfix: ETS2 / ATS için sabit gamepad
+# padfix: a stable gamepad for ETS2 / ATS
 
-Euro Truck Simulator 2 ve American Truck Simulator için bir SDK eklentisi. Xbox uyumlu (XInput) gamepad'ini oyuna **adı hiç değişmeyen tek bir cihaz** olarak verir: **"Sabit Gamepad"**. Pad kapanıp açılsa, başka USB'ye takılsa ya da Windows onu farklı tanısa da tuş atamaların kaybolmaz.
+An SCS SDK plugin for Euro Truck Simulator 2 and American Truck Simulator. It gives the game your Xbox-compatible (XInput) gamepad as **one device whose name never changes**: **"Stable Gamepad"**. Your bindings stay put when the pad turns off and back on, moves to another USB port, or Windows recognizes it differently.
 
-> **English:** An SCS SDK input plugin for ETS2/ATS that exposes your XInput gamepad as one stable device ("Sabit Gamepad", `sdk.padfix`). Bindings no longer break when the pad reconnects and gets a new DirectInput GUID, or when the game loses buttons through its own XInput/Steam Input handling. Download the zip from Releases and run `install.bat`.
+## What problem does it solve?
 
-## Hangi sorunu çözüyor?
+ETS sees a gamepad through several paths at once, and each has its own problem:
 
-ETS, gamepad'i aynı anda birkaç yoldan görüyor ve her birinin kendi sorunu var:
+- **DirectInput:** Windows can give the pad a different identity (GUID) every time it connects. ETS saves bindings against that identity, so they disappear after the pad reconnects.
+- **Steam Input:** while it is on, Steam takes buttons like A/B/X and they never reach the game's XInput device.
+- **The game's own XInput device:** on some setups some buttons (A, B, X, LB, stick clicks, D-pad) never reach the game, even though the same buttons read fine outside it.
 
-- **DirectInput:** Windows pad'e her bağlanışta farklı bir kimlik (GUID) verebiliyor. ETS atamaları bu kimliğe kaydettiği için pad kapanıp açılınca tuşlar gidiyor.
-- **Steam Input:** Açıkken A/B/X gibi tuşları Steam yakalıyor ve oyunun XInput cihazına ulaşmıyorlar.
-- **ETS'nin XInput cihazı:** Bazı kurulumlarda bazı tuşlar (A, B, X, LB, çubuk tıklamaları, yön tuşları) oyuna hiç ulaşmıyor; aynı tuşlar oyunun dışında sorunsuz okunuyor.
+padfix relies on none of these. It reads the pad **outside** the game and hands it to ETS through the official SDK input API.
 
-padfix bunların hiçbirine dayanmıyor. Pad'i oyunun **dışında** okuyor ve ETS'ye resmi SDK giriş API'si üzerinden veriyor.
-
-## Nasıl çalışıyor?
+## How it works
 
 ```
-gamepad --XInput--> padfix_helper.exe --paylaşılan bellek--> padfix.dll --SCS Input SDK--> ETS2/ATS
-                    (oyunun dışında)                         (plugins klasöründe)
+gamepad --XInput--> padfix_helper.exe --shared memory--> padfix.dll --SCS Input SDK--> ETS2/ATS
+                    (outside the game)                    (in the plugins folder)
 ```
 
-- `padfix.dll` oyun açılırken yüklenir, `padfix_helper.exe`'yi başlatır ve oyuna 30 girişli "Sabit Gamepad" cihazını tanıtır.
-- `padfix_helper.exe` ilk bağlı XInput pad'i saniyede yaklaşık 400 kez okur. Pad kopup yeniden bağlanırsa onu kendisi bulur. Oyun kapanınca o da kapanır.
-- ETS bazen Sabit Gamepad'i kendi "kara listesine" alıp kontroller menüsünde gizliyor. Yardımcı program **oyun kapandıktan sonra** `global_controls.sii` dosyasına bakar; cihaz kara listedeyse beyaz listeye taşır. Bir sonraki açılışta cihaz menüde görünür.
+- `padfix.dll` loads with the game, starts `padfix_helper.exe` and registers the 30-input "Stable Gamepad" device.
+- `padfix_helper.exe` polls the first connected XInput pad about 400 times a second, finds it again after a reconnect, and exits when the game exits.
+- ETS sometimes puts the device on its UI blacklist, which hides it in the controls menu. **After the game closes**, the helper checks `global_controls.sii` and, if the device is blacklisted, moves it to the whitelist. It shows up in the menu from the next launch.
 
-### Girişler
+### Inputs
 
-| Tür | Girişler |
+| Type | Inputs |
 |---|---|
-| Eksenler | `lx`, `ly`, `rx`, `ry` (çubuklar, -1..1, yukarı/sağ pozitif), `lt`, `rt` (tetikler, 0..1) |
-| Tuşlar | `a`, `b`, `x`, `y`, `lb`, `rb`, `back`, `start`, `ls`, `rs` (çubuk tıklamaları) |
-| Yön tuşları | `dpad_up`, `dpad_down`, `dpad_left`, `dpad_right` |
-| Tuş gibi tetik/çubuk | `lt_press`, `rt_press`, `lstick_up/down/left/right`, `rstick_up/down/left/right` |
+| Axes | `lx`, `ly`, `rx`, `ry` (sticks, -1..1, up/right positive), `lt`, `rt` (triggers, 0..1) |
+| Buttons | `a`, `b`, `x`, `y`, `lb`, `rb`, `back`, `start`, `ls`, `rs` (stick clicks) |
+| D-pad | `dpad_up`, `dpad_down`, `dpad_left`, `dpad_right` |
+| Triggers/sticks as buttons | `lt_press`, `rt_press`, `lstick_up/down/left/right`, `rstick_up/down/left/right` |
 
-`controls.sii` içinde örnek: ``device joy `sdk.padfix` `` ve ``mix horn `keyboard.h?0 | joy.a?0` ``.
+Example in `controls.sii`: ``device joy `sdk.padfix` `` and ``mix horn `keyboard.h?0 | joy.a?0` ``.
 
-## Kurulum
+## Install
 
-1. [Releases](../../releases) sayfasından `padfix-x.y.z.zip` dosyasını indir ve bir klasöre çıkar.
-2. Oyunu kapat.
-3. `install.bat`'ı çalıştır. Kurulum, oyunu Steam kütüphanelerinde kendisi bulur. Bulamazsa oyun klasörünü ver:
+1. Download `padfix-x.y.z.zip` from the [Releases](../../releases) page and extract it to a folder.
+2. Close the game.
+3. Run `install.bat`. It finds the game in your Steam libraries. If it can't, pass the game folder:
    ```
    install.bat -GameDir "D:\SteamLibrary\steamapps\common\Euro Truck Simulator 2"
    ```
-4. Steam'de oyuna sağ tıkla → **Özellikler → Kontrolcü** → **Steam Input'u devre dışı bırak**.
-5. Oyunu aç. Açılışta çıkan "gelişmiş SDK özellikleri" uyarısında devam et (eklenti kurulu olduğu sürece her açılışta çıkar).
-6. **Seçenekler → Kontroller → Giriş türü: "Klavye + Sabit Gamepad"** seç, sonra **Tuşlar ve Butonlar**'dan tuşlarını ata.
+4. In Steam, right-click the game → **Properties → Controller** → **Disable Steam Input**.
+5. Start the game and continue past the "advanced SDK features" warning (it appears on every launch while the plugin is installed).
+6. Go to **Options → Controls → Input type: "Keyboard + Stable Gamepad"**, then bind your buttons under **Keys & Buttons**.
 
-Kurulum şu dosyaları ekler:
+The installer adds these files:
 ```
-<oyun>\bin\win_x64\plugins\padfix.dll
-<oyun>\bin\win_x64\plugins\padfix\padfix_helper.exe
-```
-
-## Kaldırma
-
-Oyunu kapat ve `uninstall.bat`'ı çalıştır. Sonra kontrollerini oyunda tekrar kendi gamepad'ine ata.
-
-## Sınırlamalar
-
-- Sadece **XInput** pad'ler: Xbox pad'leri ve X-input modundaki 8BitDo gibi uyumlu pad'ler. PlayStation pad'leri doğrudan desteklenmiyor.
-- Tek pad: ilk bağlı XInput pad kullanılır.
-- Sadece Windows (64-bit).
-- Çevrimiçi modlarla (ör. TruckersMP) uyumluluğu denenmedi.
-
-## Mevcut atamaları taşımak
-
-Atamaların ETS'nin XInput veya DirectInput cihazındaysa, `tools/convert_to_padfix.py` hepsini aynı tuşlarla Sabit Gamepad'e taşır (oyun kapalıyken):
-
-```
-python tools/convert_to_padfix.py "<Belgeler>\Euro Truck Simulator 2\steam_profiles\<profil>\controls.sii"          (sadece gösterir)
-python tools/convert_to_padfix.py "<Belgeler>\Euro Truck Simulator 2\steam_profiles\<profil>\controls.sii" --write  (yazar)
+<game>\bin\win_x64\plugins\padfix.dll
+<game>\bin\win_x64\plugins\padfix\padfix_helper.exe
 ```
 
-Önce dosyanın yedeğini al.
+## Uninstall
 
-## Derleme
+Close the game and run `uninstall.bat`. Then bind your controls to your own gamepad again in the game.
 
-Gerekenler: Visual Studio 2022 veya üstü ("C++ ile masaüstü geliştirme").
+## Limitations
+
+- **XInput** pads only: Xbox pads and compatible ones such as 8BitDo in X-input mode. PlayStation pads are not supported directly.
+- One pad: the first connected XInput pad is used.
+- Windows (64-bit) only.
+- Not tested with online mods (e.g. TruckersMP).
+- The binaries are not code-signed, so Windows SmartScreen or antivirus software may warn about them. You can build them yourself from this repository.
+
+## Moving existing bindings
+
+If your bindings are on the game's XInput or DirectInput device, `tools/convert_to_padfix.py` moves all of them to Stable Gamepad with the same buttons (with the game closed):
 
 ```
-build.bat                    build\padfix.dll ve build\padfix_helper.exe
-powershell -File make_release.ps1 -Version 1.0.0     dist\padfix-1.0.0.zip
+python tools/convert_to_padfix.py "<Documents>\Euro Truck Simulator 2\steam_profiles\<profile>\controls.sii"          (preview only)
+python tools/convert_to_padfix.py "<Documents>\Euro Truck Simulator 2\steam_profiles\<profile>\controls.sii" --write  (writes the file)
 ```
 
-Geliştirme araçları (`tools/`):
-- `host_test.cpp`: DLL'i oyun gibi yükler, cihazı kaydeder ve olayları çeker.
-- `check_helper.py`: yardımcı programı tek başına çalıştırıp paylaşılan belleği okur.
+Back up the file first.
 
-## Lisans
+## Building
 
-MIT, bkz. [LICENSE](LICENSE). `sdk/` altındaki SCS SDK başlık dosyaları SCS Software'e aittir ve [kendi lisanslarıyla](sdk/sdk_license.txt) dağıtılır.
+Requires Visual Studio 2022 or later with "Desktop development with C++".
+
+```
+build.bat                                          build\padfix.dll and build\padfix_helper.exe
+powershell -File make_release.ps1 -Version 1.0.1   dist\padfix-1.0.1.zip
+```
+
+Development tools (`tools/`):
+- `host_test.cpp`: loads the DLL like the game does, registers the device and pulls events.
+- `check_helper.py`: runs the helper on its own and reads the shared memory.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The SCS SDK headers under `sdk/` belong to SCS Software and are distributed under [their own license](sdk/sdk_license.txt).
