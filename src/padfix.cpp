@@ -1,10 +1,10 @@
 /**
  * @file padfix.cpp
- * @brief ETS2/ATS input plugin exposing the XInput pad as one SDK device whose
+ * @brief ETS2/ATS input plugin exposing merged XInput pads as one SDK device whose
  * name never changes ("padfix"), so bindings survive reconnects, DirectInput
  * GUID changes and Steam Input toggling.
  *
- * The pad itself is read by padfix_helper.exe (started from here) outside the
+ * The pads are read and merged by padfix_helper.exe (started from here) outside the
  * game process; this plugin only turns the shared state into input events.
  */
 
@@ -104,7 +104,7 @@ struct device_data_t
 	uint32_t last_heartbeat;
 	DWORD last_heartbeat_time;
 	DWORD last_restart_time;
-	bool was_connected;
+	uint32_t last_connected_slots;
 	bool pressed_once[BUTTON_COUNT];
 };
 
@@ -247,13 +247,14 @@ void update_device(device_data_t &data)
 	}
 
 	const bool connected = helper_alive && data.snapshot.connected;
-	if (connected != data.was_connected) {
-		data.was_connected = connected;
+	const uint32_t slots = connected ? data.snapshot.connected_slots : 0;
+	if (slots != data.last_connected_slots) {
+		data.last_connected_slots = slots;
 		if (connected) {
-			log_line(SCS_LOG_TYPE_message, "Pad connected (XInput slot %u)", data.snapshot.slot + 1);
+			log_line(SCS_LOG_TYPE_message, "Merging XInput slots (mask 0x%X; bits 0-3 = slots 1-4)", slots);
 		}
 		else {
-			log_line(SCS_LOG_TYPE_message, "Pad disconnected");
+			log_line(SCS_LOG_TYPE_message, "All pads disconnected");
 		}
 	}
 

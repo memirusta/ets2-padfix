@@ -1,6 +1,6 @@
 # padfix: a stable gamepad for ETS2 / ATS
 
-An SCS SDK plugin for Euro Truck Simulator 2 and American Truck Simulator. It gives the game your Xbox-compatible (XInput) gamepad as **one device whose name never changes**: **"Stable Gamepad"**. Your bindings stay put when the pad turns off and back on, moves to another USB port, or Windows recognizes it differently.
+An SCS SDK plugin for Euro Truck Simulator 2 and American Truck Simulator. It gives the game your physical and virtual Xbox-compatible (XInput) gamepads as **one device whose name never changes**: **"Stable Gamepad"**. Your bindings stay put when the pad turns off and back on, moves to another USB port, or Windows recognizes it differently.
 
 ## What problem does it solve?
 
@@ -20,8 +20,35 @@ gamepad --XInput--> padfix_helper.exe --shared memory--> padfix.dll --SCS Input 
 ```
 
 - `padfix.dll` loads with the game, starts `padfix_helper.exe` and registers the 30-input "Stable Gamepad" device.
-- `padfix_helper.exe` polls the first connected XInput pad about 400 times a second, finds it again after a reconnect, and exits when the game exits.
+- `padfix_helper.exe` polls all connected XInput pads about 400 times a second, merges their state, discovers reconnects, and exits when the game exits.
 - ETS sometimes puts the device on its UI blacklist, which hides it in the controls menu. **After the game closes**, the helper checks `global_controls.sii` and, if the device is blacklisted, moves it to the whitelist. It shows up in the menu from the next launch.
+
+### Simultaneous physical and virtual controllers
+
+All connected XInput slots (up to four) contribute at the same time. For example, HowlControl can provide analog keyboard steering while an 8BitDo pad provides camera movement and buttons. Physical, virtual, USB and receiver connections use the same merge path; no device is excluded by vendor or device ancestry.
+
+Merge rules:
+
+- Buttons and D-pad: logical OR. A button stays held until every source holding it releases or disconnects.
+- LT/RT: the largest value from any connected source, separately for each trigger.
+- Each stick axis: the strongest absolute value. Equal-strength opposite directions produce zero. Full-scale -32768 and +32767 count as equal strength.
+- Identical inputs are not added together; two sources cannot double steering or trigger values.
+- Small analog values are preserved. Configure dead zones and sensitivity in the game.
+- Empty slots are rescanned twice a second while connected slots are polled continuously. Disconnecting one source clears only that source's contribution.
+
+Bind axes, including **steering**, to **Stable Gamepad** to use merged input. A steering binding directly on a native XInput device bypasses the merge. The helper no longer automatically moves steering to a native slot after the game exits.
+
+To move an existing native steering binding onto the already configured Stable Gamepad, with the game **closed**:
+
+```
+padfix_helper.exe --fix-merged-steering "<profile>\controls.sii"
+```
+
+This changes only `input j_steer` to the existing padfix alias's `.lx` axis, preserves device declarations and other bindings, and saves `controls.sii.padfix.bak`. Wheel/keyboard steering and profiles without padfix remain unchanged.
+
+The former native-steering vibration workaround bypasses merged steering. The SCS Input SDK interface used here has no vibration output; native game vibration is not guaranteed when steering is bound to Stable Gamepad. The explicit `--fix-steering <profile> [slot 1-4]` command remains available for users who intentionally choose native steering.
+
+The helper and DLL use version 2 shared memory for the connected-slot mask. Update both binaries together.
 
 ### Inputs
 
@@ -42,9 +69,9 @@ Example in `controls.sii`: ``device joy `sdk.padfix` `` and ``mix horn `keyboard
    ```
    install.bat -GameDir "D:\SteamLibrary\steamapps\common\Euro Truck Simulator 2"
    ```
-4. In Steam, right-click the game → **Properties → Controller** → **Disable Steam Input**.
+4. In Steam, right-click the game â†’ **Properties â†’ Controller** â†’ **Disable Steam Input**.
 5. Start the game and continue past the "advanced SDK features" warning (it appears on every launch while the plugin is installed).
-6. Go to **Options → Controls → Input type: "Keyboard + Stable Gamepad"**, then bind your buttons under **Keys & Buttons**.
+6. Go to **Options â†’ Controls â†’ Input type: "Keyboard + Stable Gamepad"**, then bind your buttons under **Keys & Buttons**.
 
 The installer adds these files:
 ```
@@ -59,7 +86,7 @@ Close the game and run `uninstall.bat`. Then bind your controls to your own game
 ## Limitations
 
 - **XInput** pads only: Xbox pads and compatible ones such as 8BitDo in X-input mode. PlayStation pads are not supported directly.
-- One pad: the first connected XInput pad is used.
+- One logical pad merges up to four XInput devices. Per-device bindings are not exposed separately.
 - Windows (64-bit) only.
 - Not tested with online mods (e.g. TruckersMP).
 - The binaries are not code-signed, so Windows SmartScreen or antivirus software may warn about them. You can build them yourself from this repository.
@@ -87,6 +114,9 @@ powershell -File make_release.ps1 -Version 1.0.2   dist\padfix-1.0.2.zip
 Development tools (`tools/`):
 - `host_test.cpp`: loads the DLL like the game does, registers the device and pulls events.
 - `check_helper.py`: runs the helper on its own and reads the shared memory.
+- `tools\test.bat`: builds and runs the multi-input merge and profile-repair regression checks, and builds `build\diagnose_input.exe`.
+- `tools\test.bat --sdk`: also validates simultaneous inputs through shared memory and the actual plugin DLL; close the game and helper first.
+- `diagnose_input.exe [seconds]`: read-only check of all XInput slots and their merged axes/buttons; it leaves a running game/helper and game settings untouched.
 
 ## License
 
