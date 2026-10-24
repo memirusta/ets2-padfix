@@ -81,6 +81,47 @@ void merged_steering_case(const std::string &device, const std::string &axis,
 	DeleteFileW((std::wstring(path) + L".padfix.bak").c_str());
 }
 
+void rumble_case(const std::string &native_device, const std::string &axis,
+	const std::string &mix, const std::string &expected_axis, const std::string &expected_mix,
+	DWORD slot, int expected_result, const char *newline, bool free_slot = true, bool sdk_present = true)
+{
+	wchar_t temp[MAX_PATH], path[MAX_PATH];
+	GetCurrentDirectoryW(MAX_PATH, temp);
+	check(GetTempFileNameW(temp, L"pfx", 0, path) != 0, "create rumble fixture");
+	const std::string nl = newline;
+	const std::string before = "SiiNunit" + nl + "{" + nl
+		+ " config_lines[0]: \"device joy `" + (sdk_present ? "sdk.padfix" : "") + "`\"" + nl
+		+ " config_lines[1]: \"device joy2 `" + native_device + "`\"" + nl
+		+ " config_lines[2]: \"device joy4 `" + (free_slot ? "" : "di8.other") + "`\"" + nl
+		+ " config_lines[3]: \"input j_steer `" + axis + "`\"" + nl
+		+ " config_lines[4]: \"mix steering `" + mix + "`\"" + nl
+		+ " config_lines[5]: \"constant c_ff_gain 5.000000\"" + nl
+		+ " config_lines[6]: \"mix horn `joy.a?0 | joy2.b1?0`\"" + nl + "}" + nl;
+	std::string expected = before;
+	if (expected_result == FIX_CHANGED) {
+		if (native_device != "xinput.xinput_gamepad_" + std::to_string(slot + 1)) {
+			const size_t pos = expected.find("device joy4 ``");
+			check(pos != std::string::npos, "test expects free alias");
+			expected.insert(pos + 13, "xinput.xinput_gamepad_" + std::to_string(slot + 1));
+		}
+		expected.replace(expected.find("input j_steer `") + 15, axis.size(), expected_axis);
+		expected.replace(expected.find("mix steering `") + 14, mix.size(), expected_mix);
+	}
+	check(write_file_replace(path, before), "write rumble fixture");
+	check(fix_merged_rumble(path, slot) == expected_result, "rumble repair result");
+	std::string after;
+	check(read_file(path, after) && after == expected, "only intended routing changes; FFB gain and other bindings untouched");
+	if (expected_result == FIX_CHANGED) {
+		std::string backup;
+		check(read_file((std::wstring(path) + L".padfix.bak").c_str(), backup) && backup == before, "rumble exact backup");
+		check(fix_merged_rumble(path, slot) == FIX_NOTHING_TO_DO, "rumble repair idempotent");
+		std::string unchanged_backup;
+		check(read_file((std::wstring(path) + L".padfix.bak").c_str(), unchanged_backup) && unchanged_backup == before, "idempotent repair preserves original backup");
+	}
+	DeleteFileW(path);
+	DeleteFileW((std::wstring(path) + L".padfix.bak").c_str());
+}
+
 scs_input_device_t sdk_device;
 SCSAPI_VOID sdk_log(const scs_log_type_t, const scs_string_t message) { printf("  %s\n", message); }
 SCSAPI_RESULT sdk_register(const scs_input_device_t *device) { sdk_device = *device; return SCS_RESULT_ok; }
@@ -251,7 +292,22 @@ int main(int argc, char **argv)
 		merged_steering_case("di8.custom_wheel", "joy2.x", "joy2.x", nl);
 		merged_steering_case("xinput.xinput_gamepad_1", "keyboard.a", "keyboard.a", nl);
 		merged_steering_case("xinput.xinput_gamepad_1", "joy2.x", "joy2.x", nl, false);
+		const std::string mix = "memory(j_steer_c?1, j_steer?0) - j_steer?0";
+		const std::string merged = "memory(j_steer_c?1, joy.lx?0) - joy.lx?0";
+		rumble_case("xinput.xinput_gamepad_2", "joy.lx", mix, "joy2.x", merged, 1, FIX_CHANGED, nl);
+		rumble_case("xinput.xinput_gamepad_2", "joy2.x", mix, "joy2.x", merged, 1, FIX_CHANGED, nl);
+		rumble_case("xinput.xinput_gamepad_2", "joy2.x", merged, "joy2.x", merged, 1, FIX_NOTHING_TO_DO, nl);
+		rumble_case("xinput.xinput_gamepad_1", "joy.lx", mix, "joy4.x", merged, 1, FIX_CHANGED, nl);
+		rumble_case("xinput.xinput_gamepad_1", "joy.lx", mix, "joy.lx", mix, 1, FIX_ERROR, nl, false);
+		rumble_case("di8.wheel", "joy2.x", mix, "joy2.x", mix, 1, FIX_NOTHING_TO_DO, nl);
+		rumble_case("xinput.xinput_gamepad_2", "keyboard.a", mix, "keyboard.a", mix, 1, FIX_NOTHING_TO_DO, nl);
+		rumble_case("xinput.xinput_gamepad_2", "joy.lx", "custom.axis?0", "joy.lx", "custom.axis?0", 1, FIX_ERROR, nl);
+		rumble_case("xinput.xinput_gamepad_2", "joy2.x", mix, "joy2.x", mix, 1, FIX_NOTHING_TO_DO, nl, true, false);
+		rumble_case("xinput.xinput_gamepad_2", "joy.lx", mix, "joy.lx", mix, 4, FIX_ERROR, nl);
 	}
+	std::string tokens = "j_steer_c?1 + other.j_steer?0 + j_steer2?0 - j_steer?0 + j_steer?0";
+	check(replace_input_reference(tokens, "j_steer", "joy.lx") == 2, "replace complete input identifiers only");
+	check(tokens == "j_steer_c?1 + other.j_steer?0 + j_steer2?0 - joy.lx?0 + joy.lx?0", "centering flags and unrelated identifiers preserved");
 	if (argc > 1) sdk_integration(argv[1]);
 	printf("PASS: %u checks (simultaneous merge, hotplug, conflicts, profile repair%s)\n", checks, argc > 1 ? ", IPC and SDK" : "");
 	return 0;

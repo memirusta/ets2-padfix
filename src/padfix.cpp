@@ -17,12 +17,14 @@
 #include <string.h>
 
 #include "scssdk_input.h"
+#include "scssdk_telemetry.h"
 #include "eurotrucks2/scssdk_eut2.h"
 #include "eurotrucks2/scssdk_input_eut2.h"
 #include "amtrucks/scssdk_ats.h"
 #include "amtrucks/scssdk_input_ats.h"
 
 #include "shared.h"
+#include "rumble_bridge.h"
 
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "ole32.lib")
@@ -246,6 +248,7 @@ void update_device(device_data_t &data)
 		start_helper();
 	}
 
+	rumble_bridge_tick(helper_alive);
 	const bool connected = helper_alive && data.snapshot.connected;
 	const uint32_t slots = connected ? data.snapshot.connected_slots : 0;
 	if (slots != data.last_connected_slots) {
@@ -375,6 +378,10 @@ SCSAPI_RESULT scs_input_init(const scs_u32_t version, const scs_input_init_param
 	memset(&device, 0, sizeof(device));
 	device.last_heartbeat_time = GetTickCount();
 	find_global_controls(version_params->common.game_id);
+	if (strcmp(version_params->common.game_id, SCS_GAME_ID_EUT2) == 0 || strcmp(version_params->common.game_id, SCS_GAME_ID_ATS) == 0) {
+		if (rumble_bridge_start(shared_state)) log_line(SCS_LOG_TYPE_message, "Rumble broadcast active; stable XInput slot 1");
+		else log_line(SCS_LOG_TYPE_warning, "Rumble broadcast unavailable: %s", rumble_bridge_error());
+	}
 	start_helper();
 
 	scs_input_device_t device_info;
@@ -389,6 +396,7 @@ SCSAPI_RESULT scs_input_init(const scs_u32_t version, const scs_input_init_param
 
 	if (version_params->register_device(&device_info) != SCS_RESULT_ok) {
 		log_line(SCS_LOG_TYPE_error, "Unable to register device");
+		rumble_bridge_stop();
 		close_shared_state();
 		return SCS_RESULT_generic_error;
 	}
@@ -401,6 +409,37 @@ SCSAPI_VOID scs_input_shutdown(void)
 {
 	// The helper keeps running until the game exits so a reinit can reuse it.
 
+	rumble_bridge_stop();
 	close_shared_state();
 	game_log = NULL;
+}
+
+// Only driving/paused state is observed; game-native rumble effects are relayed
+// unchanged, rather than synthesizing effects from truck telemetry.
+scs_telemetry_unregister_from_event_t rumble_unregister_event = NULL;
+SCSAPI_VOID rumble_driving_event(const scs_event_t event, const void *, const scs_context_t)
+{
+	rumble_bridge_set_driving(event == SCS_TELEMETRY_EVENT_started);
+}
+SCSAPI_RESULT scs_telemetry_init(const scs_u32_t version, const scs_telemetry_init_params_t *const params)
+{
+	if (version != SCS_TELEMETRY_VERSION_1_00 && version != SCS_TELEMETRY_VERSION_1_01) return SCS_RESULT_unsupported;
+	const auto *p = static_cast<const scs_telemetry_init_params_v100_t *>(params);
+	rumble_bridge_set_driving(false);
+	if (p->register_for_event(SCS_TELEMETRY_EVENT_started, rumble_driving_event, NULL) != SCS_RESULT_ok) return SCS_RESULT_generic_error;
+	if (p->register_for_event(SCS_TELEMETRY_EVENT_paused, rumble_driving_event, NULL) != SCS_RESULT_ok) {
+		p->unregister_from_event(SCS_TELEMETRY_EVENT_started);
+		return SCS_RESULT_generic_error;
+	}
+	rumble_unregister_event = p->unregister_from_event;
+	return SCS_RESULT_ok;
+}
+SCSAPI_VOID scs_telemetry_shutdown(void)
+{
+	rumble_bridge_set_driving(false);
+	if (rumble_unregister_event) {
+		rumble_unregister_event(SCS_TELEMETRY_EVENT_started);
+		rumble_unregister_event(SCS_TELEMETRY_EVENT_paused);
+		rumble_unregister_event = NULL;
+	}
 }

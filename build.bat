@@ -15,8 +15,12 @@ call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" >nul || exit /b 1
 
 cd /d "%~dp0"
 if not exist build mkdir build
+if not exist build\minhook mkdir build\minhook
 
-cl /nologo /O2 /W4 /EHsc /MT /LD /I sdk\include src\padfix.cpp /Fobuild\ /Fe:build\padfix.dll /link /DEF:src\padfix.def || exit /b 1
+cl /nologo /O2 /W3 /MT /TC /c third_party\minhook\src\buffer.c third_party\minhook\src\hook.c third_party\minhook\src\trampoline.c third_party\minhook\src\hde\hde64.c /Fobuild\minhook\ || exit /b 1
+lib /nologo /OUT:build\minhook\minhook.lib build\minhook\buffer.obj build\minhook\hook.obj build\minhook\trampoline.obj build\minhook\hde64.obj || exit /b 1
+
+cl /nologo /O2 /W4 /EHsc /MT /LD /I sdk\include src\padfix.cpp src\rumble_bridge.cpp /Fobuild\ /Fe:build\padfix.dll /link /DEF:src\padfix.def build\minhook\minhook.lib || exit /b 1
 cl /nologo /O2 /W4 /EHsc /MT src\helper.cpp /Fobuild\ /Fe:build\padfix_helper.exe /link /SUBSYSTEM:WINDOWS || exit /b 1
 
 echo Build OK

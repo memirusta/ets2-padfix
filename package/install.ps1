@@ -103,11 +103,25 @@ foreach ($install in $installs) {
     $globalControls = Join-Path $documents "$name\global_controls.sii"
     if (Test-Path -LiteralPath $globalControls) {
         $helper = Join-Path $helperDir 'padfix_helper.exe'
-        $code = (Start-Process -FilePath $helper -ArgumentList '--fix-whitelist', "`"$globalControls`"" -Wait -PassThru).ExitCode
+        $code = (Start-Process -WindowStyle Hidden -FilePath $helper -ArgumentList '--fix-whitelist', "`"$globalControls`"" -Wait -PassThru).ExitCode
         switch ($code) {
             0 { Write-Host '  Stable Gamepad is not blacklisted.' }
             2 { Write-Host '  Stable Gamepad was removed from the blacklist and whitelisted.' -ForegroundColor Green }
             default { Write-Host '  Could not read global_controls.sii, skipped this step.' -ForegroundColor Yellow }
+        }
+    }
+    # The plugin provides a stable in-process XInput slot 1. Keep merged steering
+    # in the mix while using that slot for native rumble, independent of USB slots.
+    foreach ($profiles in @('profiles', 'steam_profiles')) {
+        $base = Join-Path $documents "$name\$profiles"
+        if (-not (Test-Path -LiteralPath $base)) { continue }
+        foreach ($profile in Get-ChildItem -LiteralPath $base -Directory) {
+            $controls = Join-Path $profile.FullName 'controls.sii'
+            if (-not (Test-Path -LiteralPath $controls)) { continue }
+            $helper = Join-Path $helperDir 'padfix_helper.exe'
+            $repair = Start-Process -WindowStyle Hidden -FilePath $helper -ArgumentList @('--fix-broadcast-rumble', ('"' + $controls + '"')) -Wait -PassThru
+            if ($repair.ExitCode -eq 2) { Write-Host '  Stable rumble target and merged steering configured.' -ForegroundColor Green }
+            elseif ($repair.ExitCode -ne 0) { Write-Host '  Custom profile not changed; configure rumble manually if needed.' -ForegroundColor Yellow }
         }
     }
 }
