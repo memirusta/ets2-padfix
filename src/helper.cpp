@@ -31,6 +31,7 @@
 #include "controller_merge.h"
 #include "controller_sources.h"
 #include "playstation_hid.h"
+#include "profile_text.h"
 #include "rumble_output.h"
 
 #pragma comment(lib, "xinput.lib")
@@ -47,8 +48,7 @@ const int FIX_CHANGED = 2;
 // Entry the game writes for our device in global_controls.sii.
 const char DEVICE_ENTRY[] = "\"sdk.padfix\"";
 
-// Device names as they appear in controls.sii.
-const std::string PADFIX_DEVICE = "sdk.padfix";
+// Device names as they appear in controls.sii (PADFIX_DEVICE is in profile_text.h).
 bool is_xinput_device(const std::string &name)
 {
 	const std::string prefix = "xinput.xinput_gamepad_";
@@ -90,37 +90,6 @@ bool write_file_replace(const wchar_t *const path, const std::string &data)
 	return true;
 }
 
-std::string detect_newline(const std::string &data)
-{
-	return (data.find("\r\n") != std::string::npos) ? "\r\n" : "\n";
-}
-
-std::vector<std::string> split_lines(const std::string &data, const std::string &newline)
-{
-	std::vector<std::string> lines;
-	size_t start = 0;
-	for (;;) {
-		const size_t end = data.find(newline, start);
-		if (end == std::string::npos) {
-			lines.push_back(data.substr(start));
-			return lines;
-		}
-		lines.push_back(data.substr(start, end - start));
-		start = end + newline.size();
-	}
-}
-
-std::string join_lines(const std::vector<std::string> &lines, const std::string &newline)
-{
-	std::string result;
-	for (size_t i = 0; i < lines.size(); ++i) {
-		if (i) {
-			result += newline;
-		}
-		result += lines[i];
-	}
-	return result;
-}
 
 std::string trim_left(const std::string &line)
 {
@@ -241,38 +210,6 @@ int fix_whitelist(const wchar_t *const path)
 	return write_file_replace(path, join_lines(out, newline)) ? FIX_CHANGED : FIX_ERROR;
 }
 
-/**
- * @brief A "device <alias> `<device>`" line of controls.sii.
- */
-struct device_line_t
-{
-	size_t line;
-	std::string alias;
-	std::string device;
-	size_t value_start; // position of the device name inside the line
-	size_t value_end;
-};
-
-bool parse_device_line(const std::string &text, const size_t index, device_line_t &out)
-{
-	const size_t key = text.find("\"device ");
-	if (key == std::string::npos) {
-		return false;
-	}
-	const size_t name_start = key + 8;
-	const size_t name_end = text.find(' ', name_start);
-	const size_t open = (name_end == std::string::npos) ? std::string::npos : text.find('`', name_end);
-	const size_t close = (open == std::string::npos) ? std::string::npos : text.find('`', open + 1);
-	if (close == std::string::npos) {
-		return false;
-	}
-	out.line = index;
-	out.alias = text.substr(name_start, name_end - name_start);
-	out.device = text.substr(open + 1, close - open - 1);
-	out.value_start = open + 1;
-	out.value_end = close;
-	return true;
-}
 
 /**
  * @brief Moves the steering axis from the padfix device to the game's XInput device.
@@ -413,10 +350,6 @@ int fix_merged_steering(const wchar_t *const path)
 	return FIX_NOTHING_TO_DO;
 }
 
-bool input_name_char(char ch)
-{
-	return isalnum(static_cast<unsigned char>(ch)) || ch == '_' || ch == '.';
-}
 
 size_t replace_input_reference(std::string &expression, const std::string &from, const std::string &to)
 {
