@@ -83,15 +83,16 @@ Example in `controls.sii`: ``device joy `sdk.padfix` `` and ``mix horn `keyboard
 
 ## Install
 
-1. Download `padfix-x.y.z.zip` from the [Releases](../../releases) page and extract it to a folder.
+1. Download `padfix-x.y.z.zip` from the [Releases](../../releases) page and extract the whole zip to a folder.
 2. Close the game.
-3. Run `install.bat`. It finds the game in your Steam libraries. If it can't, pass the game folder:
+3. Run `padfix_setup.exe` (`install.bat` does the same). It finds the game in your Steam libraries. If it can't, pass the game folder:
    ```
-   install.bat -GameDir "D:\SteamLibrary\steamapps\common\Euro Truck Simulator 2"
+   padfix_setup.exe --game-dir "D:\SteamLibrary\steamapps\common\Euro Truck Simulator 2"
    ```
-4. In Steam, right-click the game â†’ **Properties â†’ Controller** â†’ **Disable Steam Input**.
+   Add `--files-only` to copy the plugin without changing the game's settings or your profiles.
+4. In Steam, right-click the game > **Properties > Controller** > **Disable Steam Input**.
 5. Start the game and continue past the "advanced SDK features" warning (it appears on every launch while the plugin is installed).
-6. Go to **Options â†’ Controls â†’ Input type: "Keyboard + Stable Gamepad"**, then bind your buttons under **Keys & Buttons**.
+6. Go to **Options > Controls > Input type: "Keyboard + Stable Gamepad"**, then bind your buttons under **Keys & Buttons**.
 
 The installer adds these files:
 ```
@@ -101,7 +102,7 @@ The installer adds these files:
 
 ## Uninstall
 
-Close the game and run `uninstall.bat`. Then bind your controls to your own gamepad again in the game.
+Close the game and run `uninstall.bat` (or `padfix_setup.exe --uninstall`). Then bind your controls to your own gamepad again in the game.
 
 ## Limitations
 
@@ -109,7 +110,7 @@ Close the game and run `uninstall.bat`. Then bind your controls to your own game
 - One logical pad merges up to four XInput devices. Per-device bindings are not exposed separately.
 - Windows (64-bit) only.
 - Not tested with online mods (e.g. TruckersMP).
-- The binaries are not code-signed, so Windows SmartScreen or antivirus software may warn about them. You can build them yourself from this repository.
+- Unsigned builds are blocked outright by Windows 11 **Smart App Control**, which has no "run anyway" option, and SmartScreen or antivirus software may warn about them. Only code-signed releases install while Smart App Control is on.
 
 ## Moving existing bindings
 
@@ -127,8 +128,14 @@ Back up the file first.
 Requires Visual Studio 2022 or later with "Desktop development with C++".
 
 ```
-build.bat                                          build\padfix.dll and build\padfix_helper.exe
+build.bat                                          build\padfix.dll, build\padfix_helper.exe, build\padfix_setup.exe
 powershell -File make_release.ps1 -Version 1.1.0   dist\padfix-1.1.0.zip
+```
+
+To sign a release, pass the SHA-1 thumbprint of a code-signing certificate in your Windows certificate store; `make_release.ps1` then signs and verifies all three binaries with `signtool` from the Windows SDK before packing them:
+
+```
+powershell -File make_release.ps1 -Version 1.1.0 -SignThumbprint <thumbprint>
 ```
 
 Development tools (`tools/`):

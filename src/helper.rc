@@ -1,0 +1,5 @@
+#define PADFIX_FILE_DESCRIPTION "padfix gamepad helper for ETS2/ATS"
+#define PADFIX_INTERNAL_NAME "padfix_helper"
+#define PADFIX_ORIGINAL_FILENAME "padfix_helper.exe"
+#define PADFIX_FILE_TYPE VFT_APP
+#include "version_info.rc2"

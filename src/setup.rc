@@ -1,0 +1,5 @@
+#define PADFIX_FILE_DESCRIPTION "padfix setup for ETS2/ATS"
+#define PADFIX_INTERNAL_NAME "padfix_setup"
+#define PADFIX_ORIGINAL_FILENAME "padfix_setup.exe"
+#define PADFIX_FILE_TYPE VFT_APP
+#include "version_info.rc2"

@@ -1,0 +1,5 @@
+#define PADFIX_FILE_DESCRIPTION "padfix: stable gamepad plugin for ETS2/ATS (SCS SDK)"
+#define PADFIX_INTERNAL_NAME "padfix"
+#define PADFIX_ORIGINAL_FILENAME "padfix.dll"
+#define PADFIX_FILE_TYPE VFT_DLL
+#include "version_info.rc2"

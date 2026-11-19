@@ -1,0 +1,38 @@
+/*
+ * Shared VERSIONINFO resource. The including .rc file defines
+ * PADFIX_FILE_DESCRIPTION, PADFIX_INTERNAL_NAME, PADFIX_ORIGINAL_FILENAME and
+ * PADFIX_FILE_TYPE; build.bat generates build\version.h from PADFIX_VERSION.
+ */
+
+#include <winver.h>
+#include "version.h"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION PADFIX_VERSION_MAJOR, PADFIX_VERSION_MINOR, PADFIX_VERSION_PATCH, 0
+PRODUCTVERSION PADFIX_VERSION_MAJOR, PADFIX_VERSION_MINOR, PADFIX_VERSION_PATCH, 0
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE PADFIX_FILE_TYPE
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+	BLOCK "StringFileInfo"
+	BEGIN
+		BLOCK "040904b0"
+		BEGIN
+			VALUE "CompanyName", "memirusta"
+			VALUE "FileDescription", PADFIX_FILE_DESCRIPTION
+			VALUE "FileVersion", PADFIX_VERSION_STRING
+			VALUE "InternalName", PADFIX_INTERNAL_NAME
+			VALUE "LegalCopyright", "Copyright (c) 2026 memirusta. MIT License."
+			VALUE "OriginalFilename", PADFIX_ORIGINAL_FILENAME
+			VALUE "ProductName", "padfix"
+			VALUE "ProductVersion", PADFIX_VERSION_STRING
+			VALUE "Comments", "https://github.com/memirusta/ets2-padfix"
+		END
+	END
+	BLOCK "VarFileInfo"
+	BEGIN
+		VALUE "Translation", 0x409, 1200
+	END
+END

@@ -1,4 +1,5 @@
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1" %*
+rem Same as double-clicking padfix_setup.exe; kept for existing instructions.
+"%~dp0padfix_setup.exe" %*
 echo.
 pause
