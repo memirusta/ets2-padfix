@@ -254,7 +254,7 @@ void update_device(device_data_t &data)
 	if (slots != data.last_connected_slots) {
 		data.last_connected_slots = slots;
 		if (connected) {
-			log_line(SCS_LOG_TYPE_message, "Merging XInput slots (mask 0x%X; bits 0-3 = slots 1-4)", slots);
+			log_line(SCS_LOG_TYPE_message, "Merging pads (mask 0x%X; bits 0-3 = XInput slots 1-4, bits 4-7 = PlayStation pads)", slots);
 		}
 		else {
 			log_line(SCS_LOG_TYPE_message, "All pads disconnected");

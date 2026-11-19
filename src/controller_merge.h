@@ -6,36 +6,73 @@
 // Keep the strongest input on each axis. Opposing equal magnitudes cancel;
 // identical sources are not added together. Treat both full-scale endpoints
 // as equally strong even though signed 16-bit values have asymmetric limits.
-inline SHORT merge_stick_axis(const XINPUT_STATE *states, DWORD mask, SHORT XINPUT_GAMEPAD::*axis)
+struct axis_merge_t
 {
 	int positive = 0;
 	int negative = 0;
-	for (DWORD i = 0; i < XUSER_MAX_COUNT; ++i) {
-		if (!(mask & (1u << i))) continue;
-		const int value = states[i].Gamepad.*axis;
+
+	void add(const int value)
+	{
 		if (value > positive) positive = value;
 		if (value < negative) negative = value;
 	}
-	const int negative_strength = negative == -32768 ? 32767 : -negative;
-	if (positive == negative_strength) return 0;
-	return static_cast<SHORT>(positive > negative_strength ? positive : negative);
+	SHORT result() const
+	{
+		const int negative_strength = negative == -32768 ? 32767 : -negative;
+		if (positive == negative_strength) return 0;
+		return static_cast<SHORT>(positive > negative_strength ? positive : negative);
+	}
+};
+
+// Merges any number of sources (XInput slots, PlayStation pads): buttons OR,
+// triggers max, sticks per axis as above.
+struct pad_merge_t
+{
+	XINPUT_GAMEPAD pad = {};
+	axis_merge_t lx, ly, rx, ry;
+
+	void add(const XINPUT_GAMEPAD &source)
+	{
+		pad.wButtons |= source.wButtons;
+		if (source.bLeftTrigger > pad.bLeftTrigger) pad.bLeftTrigger = source.bLeftTrigger;
+		if (source.bRightTrigger > pad.bRightTrigger) pad.bRightTrigger = source.bRightTrigger;
+		lx.add(source.sThumbLX);
+		ly.add(source.sThumbLY);
+		rx.add(source.sThumbRX);
+		ry.add(source.sThumbRY);
+	}
+	XINPUT_GAMEPAD result() const
+	{
+		XINPUT_GAMEPAD out = pad;
+		out.sThumbLX = lx.result();
+		out.sThumbLY = ly.result();
+		out.sThumbRX = rx.result();
+		out.sThumbRY = ry.result();
+		return out;
+	}
+};
+
+inline SHORT merge_stick_axis(const XINPUT_STATE *states, DWORD mask, SHORT XINPUT_GAMEPAD::*axis)
+{
+	axis_merge_t merge;
+	for (DWORD i = 0; i < XUSER_MAX_COUNT; ++i) {
+		if (mask & (1u << i)) merge.add(states[i].Gamepad.*axis);
+	}
+	return merge.result();
+}
+
+inline void add_gamepads(pad_merge_t &merge, const XINPUT_STATE *states, DWORD mask)
+{
+	for (DWORD i = 0; i < XUSER_MAX_COUNT; ++i) {
+		if (mask & (1u << i)) merge.add(states[i].Gamepad);
+	}
 }
 
 inline XINPUT_GAMEPAD merge_gamepads(const XINPUT_STATE *states, DWORD mask)
 {
-	XINPUT_GAMEPAD pad = {};
-	for (DWORD i = 0; i < XUSER_MAX_COUNT; ++i) {
-		if (!(mask & (1u << i))) continue;
-		const XINPUT_GAMEPAD &source = states[i].Gamepad;
-		pad.wButtons |= source.wButtons;
-		if (source.bLeftTrigger > pad.bLeftTrigger) pad.bLeftTrigger = source.bLeftTrigger;
-		if (source.bRightTrigger > pad.bRightTrigger) pad.bRightTrigger = source.bRightTrigger;
-	}
-	pad.sThumbLX = merge_stick_axis(states, mask, &XINPUT_GAMEPAD::sThumbLX);
-	pad.sThumbLY = merge_stick_axis(states, mask, &XINPUT_GAMEPAD::sThumbLY);
-	pad.sThumbRX = merge_stick_axis(states, mask, &XINPUT_GAMEPAD::sThumbRX);
-	pad.sThumbRY = merge_stick_axis(states, mask, &XINPUT_GAMEPAD::sThumbRY);
-	return pad;
+	pad_merge_t merge;
+	add_gamepads(merge, states, mask);
+	return merge.result();
 }
 
 struct pad_aggregator_t

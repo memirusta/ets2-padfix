@@ -1,7 +1,7 @@
 /**
  * @file helper.cpp
- * @brief padfix_helper.exe - merges connected XInput pads and publishes
- * its state in shared memory for padfix.dll.
+ * @brief padfix_helper.exe - merges connected XInput pads and PlayStation pads
+ * (read over HID) and publishes the state in shared memory for padfix.dll.
  *
  * Usage:
  *   padfix_helper.exe <game pid> [global_controls.sii path]
@@ -30,6 +30,7 @@
 #include "shared.h"
 #include "controller_merge.h"
 #include "controller_sources.h"
+#include "playstation_hid.h"
 #include "rumble_output.h"
 
 #pragma comment(lib, "xinput.lib")
@@ -496,12 +497,12 @@ int fix_merged_rumble(const wchar_t *const path, DWORD slot)
 	return write_file_replace(path, result) ? FIX_CHANGED : FIX_ERROR;
 }
 
-void publish_state(padfix_state_t *state, const pad_aggregator_t &pads)
+// connected_mask: bits 0-3 = XInput slots 1-4, bits 4-7 = PlayStation pads.
+void publish_state(padfix_state_t *state, const XINPUT_GAMEPAD &pad, const uint32_t connected_mask)
 {
-	const XINPUT_GAMEPAD pad = pads.gamepad();
 	InterlockedIncrement(reinterpret_cast<volatile LONG *>(&state->seq));
-	state->connected = pads.connected_slots ? 1 : 0;
-	state->connected_slots = pads.connected_slots;
+	state->connected = connected_mask ? 1 : 0;
+	state->connected_slots = connected_mask;
 	state->buttons = pad.wButtons;
 	state->left_trigger = pad.bLeftTrigger;
 	state->right_trigger = pad.bRightTrigger;
@@ -511,6 +512,11 @@ void publish_state(padfix_state_t *state, const pad_aggregator_t &pads)
 	state->thumb_ry = pad.sThumbRY;
 	InterlockedIncrement(reinterpret_cast<volatile LONG *>(&state->seq));
 	InterlockedIncrement(reinterpret_cast<volatile LONG *>(&state->heartbeat));
+}
+
+void publish_state(padfix_state_t *state, const pad_aggregator_t &pads)
+{
+	publish_state(state, pads.gamepad(), pads.connected_slots);
 }
 
 void fix_broadcast_in_profiles(const wchar_t *global_controls)
@@ -572,6 +578,7 @@ int serve_game(const DWORD game_pid, const wchar_t *const global_controls)
 	timeBeginPeriod(1);
 
 	pad_aggregator_t pads;
+	ps_pads_t playstation;
 	rumble_output_t rumble;
 	HANDLE rumble_mapping = NULL;
 	rumble_shared_t *rumble_shared = NULL;
@@ -582,8 +589,13 @@ int serve_game(const DWORD game_pid, const wchar_t *const global_controls)
 	DWORD wait_result;
 
 	while ((wait_result = WaitForSingleObject(game, POLL_INTERVAL_MS)) == WAIT_TIMEOUT) {
-		pads.poll(GetTickCount());
-		publish_state(state, pads);
+		const DWORD polled = GetTickCount();
+		pads.poll(polled);
+		playstation.poll(polled);
+		pad_merge_t merge;
+		add_gamepads(merge, pads.states, pads.connected_slots);
+		playstation.add_to(merge, polled);
+		publish_state(state, merge.result(), pads.connected_slots | (playstation.mask(polled) << 4));
 		const DWORD now = GetTickCount();
 		if (classified_connected != pads.connected_slots || static_cast<LONG>(now - classify_at) >= 0) {
 			classify_at = now + 500;
@@ -610,6 +622,9 @@ int serve_game(const DWORD game_pid, const wchar_t *const global_controls)
 		DWORD foreground_pid = 0;
 		GetWindowThreadProcessId(GetForegroundWindow(), &foreground_pid);
 		rumble.poll(now, targets, command, game_pid, foreground_pid == game_pid);
+		// Same command, focus and pause rules as XInput: output is zero whenever
+		// the XInput targets were stopped.
+		playstation.rumble(now, rumble.output.wLeftMotorSpeed, rumble.output.wRightMotorSpeed);
 		if (rumble_shared) {
 			auto &status = rumble_shared->status;
 			InterlockedIncrement(reinterpret_cast<volatile LONG *>(&status.seq));
@@ -628,6 +643,7 @@ int serve_game(const DWORD game_pid, const wchar_t *const global_controls)
 	}
 
 	rumble.stop(XInputSetState);
+	playstation.stop();
 	if (rumble_shared) {
 		auto &status = rumble_shared->status;
 		InterlockedIncrement(reinterpret_cast<volatile LONG *>(&status.seq));

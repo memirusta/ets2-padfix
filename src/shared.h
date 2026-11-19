@@ -24,7 +24,7 @@ struct padfix_state_t
 	volatile uint32_t heartbeat;
 
 	uint32_t connected;
-	uint32_t connected_slots; // bit 0..3 = XInput slot 1..4
+	uint32_t connected_slots; // bit 0..3 = XInput slot 1..4, bit 4..7 = PlayStation pads
 
 	// Merged XINPUT_GAMEPAD values; buttons OR, triggers max, sticks strongest axis.
 	uint16_t buttons;

@@ -36,7 +36,9 @@ def main():
     print('helper running:', proc.poll() is None)
     print('magic ok:', first['magic'] == 0x46444150)
     print('heartbeat advancing:', second['heartbeat'] - first['heartbeat'], 'polls in 0.3s')
-    print('pad connected:', bool(second['connected']), '(XInput slots %s)' % [i + 1 for i in range(4) if second['connected_slots'] & (1 << i)])
+    print('pad connected:', bool(second['connected']), '(XInput slots %s, PlayStation pads %d)' % (
+        [i + 1 for i in range(4) if second['connected_slots'] & (1 << i)],
+        bin((second['connected_slots'] >> 4) & 0xf).count('1')))
     if watch:
         print('watching buttons for %.0fs...' % watch, flush=True)
         prev = 0
