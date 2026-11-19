@@ -56,6 +56,22 @@ The PS button and the touchpad are not mapped. The game's vibration reaches Play
 - New controllers are picked up within two seconds. A controller that sends nothing for a second (for example a dropped Bluetooth link) stops contributing until it reports again.
 - The Sony USB wireless adapter is not supported.
 
+#### Profiles set up on the PlayStation controller's DirectInput device
+
+A profile that was bound on the controller's own DirectInput device (`di8.'{...}|{09CC054C-...}'` and the like) uses names that mean something else on Stable Gamepad: `x` is the left stick there but the Square button on padfix, `rx`/`ry` are L2/R2, `b1`-`b14` are buttons. When the game is switched to Stable Gamepad, it keeps those names, so steering, pedals and most buttons stop working. The installer converts such profiles, and the helper does it again after each game session (with the game closed). To run it yourself, close the game:
+
+```
+padfix_helper.exe --fix-playstation-bindings "<profile>\controls.sii" | more
+```
+
+- A `joy` alias on a DualShock 4 (`054C:05C4`, `054C:09CC`) or DualSense (`054C:0CE6`, Edge `054C:0DF2`) is pointed at Stable Gamepad, or merged into the existing Stable Gamepad alias. A Stable Gamepad alias that still carries DirectInput names (`z`, `rz`, `b1`-`b14`, `pov1_*`, or `x`/`y` on steering, pedals or look) is repaired. Keyboard, mouse, wheel and other aliases are never touched.
+- Sticks: `x y z rz` become `lx ly rx ry`; L2/R2 (`rx`/`ry`) become `lt`/`rt`, and the pedal's `c_jzthrottle`/`c_jzbrake`/`c_jzclutch` is set to 1 so it does not rest half pressed. Buttons: Square `x`, Cross `a`, Circle `b`, Triangle `y`, L1/R1 `lb`/`rb`, L2/R2 click `lt_press`/`rt_press`, Share `back`, Options `start`, L3/R3 `ls`/`rs`, D-pad `dpad_*`.
+- The PS button, the touchpad and the DualSense mute button have no Stable Gamepad input; those bindings are dropped, as are the game's default gear1-7 pad buttons. A button that is already bound to something else on Stable Gamepad is dropped too (for example drive on L3 while L3 is the parking brake), so one button never does two things. Every dropped binding is printed; rebind it in the game if you need it.
+- On a Stable Gamepad alias, `rx`/`ry` count as DirectInput names only on throttle, brake and clutch, and only when the profile has other DirectInput names, because they are padfix's right stick too.
+- It saves `controls.sii.padfix.bak` and, because later fixes replace that file, also `controls.sii.padfix-playstation.bak`. It is idempotent, and writes nothing if the profile contains an input it does not know. Exit code 0 = unchanged, 2 = converted, 1 = error.
+
+**Steering curve.** DirectInput profiles often steer with `c_steer_func 0` and `c_steer_dz 0`: the stick maps linearly to the steering wheel, which feels far too fast on a pad. When the conversion moves steering onto `lx` and both are still 0, it sets the game's own steering curve to `c_steer_func 1` and `c_steer_dz 0.05` (Options > Controls: steering non-linearity and dead zone). The game steers with `pow(normalize(abs(j), c_steer_dz), 1 + c_steer_func * 0.5)`, so this is an exponent of 1.5 with a 5% dead zone: half stick gives about a third of full lock. padfix itself still sends the raw stick value. Values you set yourself are never changed, and the automatic repair after a game session never touches the curve. Choose other values with `--steer-func <0-2>` and `--steer-dz <0-1>`, or pass `0` for both to keep the linear curve.
+
 Bind axes to **Stable Gamepad** to use merged input. Broadcast setup keeps the native rumble target stable while the steering mix continues to read merged input. After a broadcast session, the helper repairs supported padfix profiles with the game closed; unrelated wheel/keyboard profiles stay unchanged.
 
 To move an existing native steering binding onto the already configured Stable Gamepad, with the game **closed**:
@@ -134,14 +150,14 @@ Close the game and run `uninstall.bat` (or `padfix_setup.exe --uninstall`). Then
 
 ## Moving existing bindings
 
-If your bindings are on the game's XInput or DirectInput device, `tools/convert_to_padfix.py` moves all of them to Stable Gamepad with the same buttons (with the game closed):
+If your bindings are on the game's XInput or DirectInput device (including a DualShock 4 or DualSense), `tools/convert_to_padfix.py` moves all of them to Stable Gamepad with the same buttons (with the game closed). It applies the same PlayStation rules and steering curve as `--fix-playstation-bindings`, and also repairs a Stable Gamepad alias that still carries DirectInput names:
 
 ```
 python tools/convert_to_padfix.py "<Documents>\Euro Truck Simulator 2\steam_profiles\<profile>\controls.sii"          (preview only)
 python tools/convert_to_padfix.py "<Documents>\Euro Truck Simulator 2\steam_profiles\<profile>\controls.sii" --write  (writes the file)
 ```
 
-Back up the file first.
+`--write` saves the original as `controls.sii.padfix.bak` first. `--steer-func` and `--steer-dz` choose the steering curve (see above).
 
 ## Building
 
@@ -161,7 +177,7 @@ powershell -File make_release.ps1 -Version 1.1.0 -SignThumbprint <thumbprint>
 Development tools (`tools/`):
 - `host_test.cpp`: loads the DLL like the game does, registers the device and pulls events.
 - `check_helper.py`: runs the helper on its own and reads the shared memory.
-- `tools\test.bat`: builds and runs the multi-input merge and profile-repair regression checks, the PlayStation report/rumble checks, plus isolated rumble hook/broadcast tests, and builds `build\diagnose_input.exe`.
+- `tools\test.bat`: builds and runs the multi-input merge and profile-repair regression checks, the PlayStation profile conversion checks (`profile_test.cpp`, and `test_convert_to_padfix.py` when Python is installed), the PlayStation report/rumble checks, plus isolated rumble hook/broadcast tests, and builds `build\diagnose_input.exe`.
 - `tools\test.bat --sdk`: also validates simultaneous inputs through shared memory and the actual plugin DLL; close the game and helper first.
 - `check_rumble.py [seconds]`: read-only native command, output-target, pause/watchdog and motor-write diagnostics for the running game.
 - `diagnose_input.exe [seconds] [--rumble]`: check of all XInput slots and PlayStation controllers and their merged axes/buttons; it leaves a running game/helper and game settings untouched. It writes nothing to controllers unless `--rumble` is given, which makes PlayStation controllers vibrate gently while Cross is held.

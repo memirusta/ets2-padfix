@@ -21,6 +21,10 @@ if /I "%~1"=="--sdk" (
 set "PADFIX_TEST_RESULT=%ERRORLEVEL%"
 popd
 if not "%PADFIX_TEST_RESULT%"=="0" exit /b %PADFIX_TEST_RESULT%
+cl /nologo /O2 /W4 /WX /EHsc /MT tools\profile_test.cpp /Fobuild\ /Fe:build\profile_test.exe || exit /b 1
+build\profile_test.exe || exit /b 1
+rem The Python check runs only where a real Python is installed (not the Store stub).
+python -c "import sys" >nul 2>&1 && (python -I tools\test_convert_to_padfix.py || exit /b 1)
 cl /nologo /O2 /W4 /WX /EHsc /MT tools\playstation_test.cpp /Fobuild\ /Fe:build\playstation_test.exe || exit /b 1
 build\playstation_test.exe || exit /b 1
 cl /nologo /O2 /W4 /WX /EHsc /MT tools\diagnose_input.cpp /Fobuild\ /Fe:build\diagnose_input.exe || exit /b 1

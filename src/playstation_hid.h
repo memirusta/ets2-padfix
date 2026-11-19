@@ -251,12 +251,15 @@ struct ps_pads_t
 		}
 	}
 
-	// Bit i = i-th connected PlayStation pad that is currently reporting.
+	// One bit per PlayStation pad that is currently reporting, at most four.
+	// devices holds up to twice that, and silent ones (e.g. a dropped Bluetooth
+	// link still open) must not hide a reporting pad further down the list.
 	DWORD mask(const DWORD now) const
 	{
 		DWORD bits = 0;
-		for (size_t i = 0; i < devices.size() && i < PS_MAX_PADS; ++i) {
-			if (devices[i]->fresh(now)) bits |= 1u << i;
+		size_t count = 0;
+		for (size_t i = 0; i < devices.size() && count < PS_MAX_PADS; ++i) {
+			if (devices[i]->fresh(now)) bits |= 1u << count++;
 		}
 		return bits;
 	}

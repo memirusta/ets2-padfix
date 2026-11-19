@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "version.h"
+#include "profile_text.h"
 
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "ole32.lib")
@@ -415,14 +416,34 @@ void stop_helper(const std::wstring &helper_path)
 }
 
 // Runs the installed helper with one of its --fix-* options.
-// Returns its exit code, or -1 if it could not run.
-int run_helper(const std::wstring &helper, const wchar_t *const option, const std::wstring &file)
+// Returns its exit code, or -1 if it could not run. With output, collects what
+// the helper printed (its reports are short and fit in the pipe buffer).
+int run_helper(const std::wstring &helper, const wchar_t *const option, const std::wstring &file, std::string *const output = NULL)
 {
 	std::wstring command_line = L"\"" + helper + L"\" " + option + L" \"" + file + L"\"";
 	STARTUPINFOW startup = {};
 	startup.cb = sizeof(startup);
+	HANDLE read_pipe = NULL;
+	HANDLE write_pipe = NULL;
+	if (output) {
+		SECURITY_ATTRIBUTES inherit = { sizeof(inherit), NULL, TRUE };
+		if (! CreatePipe(&read_pipe, &write_pipe, &inherit, 1024 * 1024)) {
+			return -1;
+		}
+		SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0);
+		startup.dwFlags = STARTF_USESTDHANDLES;
+		startup.hStdOutput = write_pipe;
+		startup.hStdError = write_pipe;
+	}
 	PROCESS_INFORMATION process = {};
-	if (! CreateProcessW(helper.c_str(), &command_line[0], NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &startup, &process)) {
+	const BOOL started = CreateProcessW(helper.c_str(), &command_line[0], NULL, NULL, output ? TRUE : FALSE, CREATE_NO_WINDOW, NULL, NULL, &startup, &process);
+	if (write_pipe) {
+		CloseHandle(write_pipe);
+	}
+	if (! started) {
+		if (read_pipe) {
+			CloseHandle(read_pipe);
+		}
 		return -1;
 	}
 	CloseHandle(process.hThread);
@@ -435,6 +456,15 @@ int run_helper(const std::wstring &helper, const wchar_t *const option, const st
 		code = static_cast<DWORD>(-1);
 	}
 	CloseHandle(process.hProcess);
+	if (read_pipe) {
+		// The helper has exited, so the pipe has no writer left and reads end at its end.
+		char buffer[4096];
+		DWORD read = 0;
+		while (ReadFile(read_pipe, buffer, sizeof(buffer), &read, NULL) && read) {
+			output->append(buffer, read);
+		}
+		CloseHandle(read_pipe);
+	}
 	return static_cast<int>(code);
 }
 
@@ -461,8 +491,92 @@ bool uninstall_from(const std::wstring &dll, const std::wstring &helper_dir)
 	return true;
 }
 
+int hex_digit(const wchar_t c)
+{
+	if (c >= L'0' && c <= L'9') return c - L'0';
+	if (c >= L'a' && c <= L'f') return c - L'a' + 10;
+	if (c >= L'A' && c <= L'F') return c - L'A' + 10;
+	return -1;
+}
+
+// Profile folder names are the profile name in hex.
+std::wstring profile_label(const std::wstring &folder)
+{
+	if (folder.empty() || folder.size() % 2) {
+		return folder;
+	}
+	std::string name;
+	for (size_t i = 0; i < folder.size(); i += 2) {
+		const int high = hex_digit(folder[i]);
+		const int low = hex_digit(folder[i + 1]);
+		if (high < 0 || low < 0) {
+			return folder;
+		}
+		name += static_cast<char>(high * 16 + low);
+	}
+	const std::wstring decoded = utf8_to_wide(name);
+	return decoded.empty() ? folder : decoded;
+}
+
+// Steering on a joystick alias that the profile fixes leave alone, in a profile
+// that uses Stable Gamepad (e.g. steering still on another DirectInput device).
+// Empty when steering is supported or on the keyboard or mouse.
+std::wstring unsupported_steering(const std::wstring &controls)
+{
+	std::string data;
+	if (! read_file(controls, data)) {
+		return std::wstring();
+	}
+	const std::vector<std::string> lines = split_lines(data, detect_newline(data));
+	std::vector<device_line_t> devices;
+	std::string steer;
+	bool padfix = false;
+	for (size_t i = 0; i < lines.size(); ++i) {
+		device_line_t device;
+		if (parse_device_line(lines[i], i, device)) {
+			devices.push_back(device);
+			padfix = padfix || device.device == PADFIX_DEVICE;
+			continue;
+		}
+		const std::string key = "\"input j_steer `";
+		const size_t start = lines[i].find(key);
+		const size_t end = (start == std::string::npos) ? std::string::npos : lines[i].find('`', start + key.size());
+		if (end != std::string::npos) {
+			steer = lines[i].substr(start + key.size(), end - start - key.size());
+		}
+	}
+	if (! padfix) {
+		return std::wstring();
+	}
+	for (const device_line_t &device : devices) {
+		if (device.alias.compare(0, 3, "joy") != 0 || steer.compare(0, device.alias.size() + 1, device.alias + ".") != 0) {
+			continue;
+		}
+		if (device.device == PADFIX_DEVICE) {
+			return steer == device.alias + ".lx" ? std::wstring() : utf8_to_wide(steer);
+		}
+		if (device.device.empty() || device.device.compare(0, 22, "xinput.xinput_gamepad_") == 0) {
+			return steer == device.alias + ".x" ? std::wstring() : utf8_to_wide(steer);
+		}
+		return utf8_to_wide(steer) + L" (a DirectInput device: wheel or other controller)";
+	}
+	return std::wstring();
+}
+
+// Prints the helper's report lines under a profile's messages.
+void print_report(const std::string &report)
+{
+	const std::vector<std::string> lines = split_lines(report, detect_newline(report));
+	for (const std::string &line : lines) {
+		if (! line.empty()) {
+			print(L"    " + utf8_to_wide(line));
+		}
+	}
+}
+
 // The game sometimes hides the device in the controls menu; the helper fixes that.
-// It also keeps merged steering on the stable in-game XInput slot used for rumble.
+// It also moves PlayStation DirectInput bindings onto Stable Gamepad and keeps
+// merged steering on the stable in-game XInput slot used for rumble.
 void configure_game(const install_t &install, const std::wstring &helper, const std::wstring &documents)
 {
 	if (documents.empty()) {
@@ -496,12 +610,29 @@ void configure_game(const install_t &install, const std::wstring &helper, const 
 			if (! file_exists(controls)) {
 				continue;
 			}
+			const std::wstring label = L"  [" + profile_label(name) + L"] ";
+			std::string report;
+			const int converted = run_helper(helper, L"--fix-playstation-bindings", controls, &report);
+			if (converted == FIX_CHANGED) {
+				print(label + L"PlayStation bindings moved to Stable Gamepad (original: controls.sii.padfix-playstation.bak).", GREEN);
+			}
+			else if (converted != FIX_NOTHING_TO_DO) {
+				print(label + L"PlayStation bindings could not be converted; the profile was not changed.", YELLOW);
+			}
+			print_report(report);
 			const int code = run_helper(helper, L"--fix-broadcast-rumble", controls);
 			if (code == FIX_CHANGED) {
-				print(L"  Stable rumble target and merged steering configured.", GREEN);
+				print(label + L"Stable rumble target and merged steering configured.", GREEN);
 			}
 			else if (code != FIX_NOTHING_TO_DO) {
-				print(L"  Custom profile not changed; configure rumble manually if needed.", YELLOW);
+				print(label + L"Custom profile not changed; configure rumble manually if needed.", YELLOW);
+			}
+			else {
+				const std::wstring steering = unsupported_steering(controls);
+				if (! steering.empty()) {
+					print(label + L"Steering stays on " + steering + L"; padfix left it unchanged.", YELLOW);
+					print(L"    To steer with the gamepad, bind Steering to Stable Gamepad in Options > Controls.", YELLOW);
+				}
 			}
 		} while (FindNextFileW(find, &data));
 		FindClose(find);
