@@ -122,6 +122,112 @@ void rumble_case(const std::string &native_device, const std::string &axis,
 	DeleteFileW((std::wstring(path) + L".padfix.bak").c_str());
 }
 
+std::string sii_profile(const std::vector<std::string> &config, const std::string &nl)
+{
+	std::string text = "SiiNunit" + nl + "{" + nl + "input_config : _nameless.1 {" + nl + " config_lines: " + std::to_string(config.size()) + nl;
+	for (size_t i = 0; i < config.size(); ++i) text += " config_lines[" + std::to_string(i) + "]: \"" + config[i] + "\"" + nl;
+	return text + "}" + nl + nl + "}" + nl;
+}
+
+// Runs the full Stable Gamepad repair on a profile and compares the whole file.
+void profile_case(const char *name, const std::vector<std::string> &before_lines, const std::vector<std::string> &expected_lines,
+	int expected_result, const char *newline)
+{
+	wchar_t temp[MAX_PATH], path[MAX_PATH];
+	GetCurrentDirectoryW(MAX_PATH, temp);
+	check(GetTempFileNameW(temp, L"pfx", 0, path) != 0, "create profile fixture");
+	const std::string before = sii_profile(before_lines, newline);
+	const std::string expected = sii_profile(expected_lines, newline);
+	check(write_file_replace(path, before), "write profile fixture");
+	check(fix_stable_gamepad_profile(path) == expected_result, name);
+	std::string after;
+	check(read_file(path, after) && after == expected, name);
+	if (expected_result == FIX_CHANGED) {
+		std::string backup;
+		check(read_file((std::wstring(path) + L".padfix.bak").c_str(), backup) && backup == before, "profile repair keeps an exact backup");
+		check(fix_stable_gamepad_profile(path) == FIX_NOTHING_TO_DO, "profile repair is idempotent");
+	}
+	DeleteFileW(path);
+	DeleteFileW((std::wstring(path) + L".padfix.bak").c_str());
+}
+
+void stable_gamepad_profile_cases(const char *nl)
+{
+	// Lines as ETS2 writes them for "Keyboard + Stable Gamepad" (generic DirectInput preset).
+	const std::string mix_j = "mix steering `dsteering - memory(j_steer_c?1, (pow(normalize(abs(sel(c_jisteer, -j_steer?0, j_steer?0)), c_steer_dz), (1.0 + c_steer_func * 0.5)) * sign(sel(c_jisteer, -j_steer?0, j_steer?0)))) - semantical.steering?0`";
+	const std::string mix_lx = "mix steering `dsteering - memory(j_steer_c?1, (pow(normalize(abs(sel(c_jisteer, -joy.lx?0, joy.lx?0)), c_steer_dz), (1.0 + c_steer_func * 0.5)) * sign(sel(c_jisteer, -joy.lx?0, joy.lx?0)))) - semantical.steering?0`";
+	const std::vector<std::string> preset = {
+		"device keyboard `sys.keyboard`", "device mouse `fusion.mouse`", "device joy `sdk.padfix`", "device phys_mouse ``",
+		"device joy2 ``", "device joy3 ``",
+		"input j_steer `joy.x`", "input j_throttle `joy.ry`", "input j_brake `joy.rx`", "input j_clutch ``",
+		"input j_look_ud `joy.rz`", "input j_look_lr `joy.z`",
+		"constant c_steer_dz 0.000000", "constant c_jzthrottle 1.000000", "constant c_jzbrake 0.000000",
+		"constant c_rsteersens 0.400000", "constant c_asteersens 2.400000", "constant c_relatsteer 0.000000",
+		mix_j,
+		"mix cam1 `keyboard.key1?0 | joy.pov1_left?0 | semantical.cam1?0`",
+		"mix cam2 `keyboard.key2?0 | joy.pov1_down?0 | semantical.cam2?0`",
+		"mix lookup `joy.pov1_up?0 | joy.pov1_right?0 | joy2.pov1_up?0`",
+		"mix airhorn `unbound?0 | joy.b6?0 | semantical.airhorn?0`",
+	};
+	std::vector<std::string> converted = preset;
+	converted[4] = "device joy2 `xinput.xinput_gamepad_1`";
+	converted[6] = "input j_steer `joy2.x`";
+	converted[7] = "input j_throttle `joy.rt`";
+	converted[8] = "input j_brake `joy.lt`";
+	converted[10] = "input j_look_ud `joy.ry`";
+	converted[11] = "input j_look_lr `joy.rx`";
+	converted[14] = "constant c_jzbrake 1.000000";
+	converted[17] = "constant c_relatsteer 1.000000";
+	converted[18] = mix_lx;
+	converted[19] = "mix cam1 `keyboard.key1?0 | joy.dpad_left?0 | semantical.cam1?0`";
+	converted[20] = "mix cam2 `keyboard.key2?0 | joy.dpad_down?0 | semantical.cam2?0`";
+	converted[21] = "mix lookup `joy.dpad_up?0 | joy.dpad_right?0 | joy2.pov1_up?0`";
+	profile_case("game's generic preset converted: stick steers, triggers pedal, relative steering", preset, converted, FIX_CHANGED, nl);
+
+	// Quick Setup on a configured profile only flips the steering regime to absolute.
+	const std::vector<std::string> quick_setup = {
+		"device joy `sdk.padfix`", "device joy2 `di8.'{AFA6EE10}|{BEAD1234}'`", "device joy3 `xinput.xinput_gamepad_1`",
+		"input j_steer `joy3.x`", "input j_throttle `joy.rt`",
+		"constant c_steer_dz 0.000000", "constant c_rsteersens 0.400000", "constant c_relatsteer 0.000000", mix_lx,
+	};
+	std::vector<std::string> relative = quick_setup;
+	relative[7] = "constant c_relatsteer 1.000000";
+	profile_case("Quick Setup's absolute steering switched back to relative", quick_setup, relative, FIX_CHANGED, nl);
+	profile_case("working profile untouched", relative, relative, FIX_NOTHING_TO_DO, nl);
+
+	// The user's own axis choices are not the preset: only rumble routing changes.
+	const std::vector<std::string> custom_axes = {
+		"device joy `sdk.padfix`", "device joy2 ``", "input j_steer `joy.lx`", "input j_throttle `joy.ry`",
+		"constant c_jzbrake 0.000000", "constant c_relatsteer 1.000000", mix_j,
+	};
+	std::vector<std::string> routed = custom_axes;
+	routed[1] = "device joy2 `xinput.xinput_gamepad_1`";
+	routed[2] = "input j_steer `joy2.x`";
+	routed[6] = mix_lx;
+	profile_case("user-chosen axes kept, only rumble routing added", custom_axes, routed, FIX_CHANGED, nl);
+
+	// Wheels, keyboards and profiles without Stable Gamepad keep their regime and bindings.
+	const std::vector<std::string> wheel = {
+		"device joy `sdk.padfix`", "device joy2 `di8.'{1}|{C24F046D}'`", "input j_steer `joy2.x`",
+		"constant c_relatsteer 0.000000", mix_j,
+	};
+	profile_case("wheel steering keeps absolute regime", wheel, wheel, FIX_NOTHING_TO_DO, nl);
+	const std::vector<std::string> keyboard = {
+		"device joy `sdk.padfix`", "device joy2 ``", "input j_steer `keyboard.a`", "constant c_relatsteer 0.000000", mix_j,
+	};
+	profile_case("keyboard steering untouched", keyboard, keyboard, FIX_NOTHING_TO_DO, nl);
+	const std::vector<std::string> no_padfix = {
+		"device joy `xinput.xinput_gamepad_1`", "device joy2 ``", "input j_steer `joy.x`", "input j_throttle `joy.ry`",
+		"constant c_relatsteer 0.000000", mix_j,
+	};
+	profile_case("profile without Stable Gamepad untouched", no_padfix, no_padfix, FIX_NOTHING_TO_DO, nl);
+
+	// A custom steering mix stops the whole repair, preset conversion included.
+	std::vector<std::string> custom_mix = preset;
+	custom_mix[18] = "mix steering `custom.axis?0`";
+	profile_case("custom steering mix leaves the file alone", custom_mix, custom_mix, FIX_ERROR, nl);
+}
+
 scs_input_device_t sdk_device;
 SCSAPI_VOID sdk_log(const scs_log_type_t, const scs_string_t message) { printf("  %s\n", message); }
 SCSAPI_RESULT sdk_register(const scs_input_device_t *device) { sdk_device = *device; return SCS_RESULT_ok; }
@@ -304,6 +410,7 @@ int main(int argc, char **argv)
 		rumble_case("xinput.xinput_gamepad_2", "joy.lx", "custom.axis?0", "joy.lx", "custom.axis?0", 1, FIX_ERROR, nl);
 		rumble_case("xinput.xinput_gamepad_2", "joy2.x", mix, "joy2.x", mix, 1, FIX_NOTHING_TO_DO, nl, true, false);
 		rumble_case("xinput.xinput_gamepad_2", "joy.lx", mix, "joy.lx", mix, 4, FIX_ERROR, nl);
+		stable_gamepad_profile_cases(nl);
 	}
 	std::string tokens = "j_steer_c?1 + other.j_steer?0 + j_steer2?0 - j_steer?0 + j_steer?0";
 	check(replace_input_reference(tokens, "j_steer", "joy.lx") == 2, "replace complete input identifiers only");

@@ -14,6 +14,9 @@
  *   padfix_helper.exe --fix-merged-rumble <controls.sii path> <XInput slot 1-4>
  *   padfix_helper.exe --fix-broadcast-rumble <controls.sii path>
  *     Opt-in profile fixes only. Exit code 0 = unchanged, 2 = fixed, 1 = error.
+ *     --fix-broadcast-rumble is the full Stable Gamepad repair (also run by the
+ *     installer and after each session): the game's generic preset converted
+ *     to the pad's axes, stable rumble target, relative stick steering.
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -22,6 +25,7 @@
 #include <xinput.h>
 #include <mmsystem.h>
 #include <stdlib.h>
+#include <string.h>
 #include <ctype.h>
 
 #include <string>
@@ -434,16 +438,38 @@ size_t replace_input_reference(std::string &expression, const std::string &from,
 	return count;
 }
 
+// controls.sii split into lines, plus what is needed to write it back byte-exact
+// apart from the edits.
+struct profile_text_t
+{
+	std::string data;
+	std::string newline;
+	std::vector<std::string> lines;
+};
+
+bool load_profile(const wchar_t *const path, profile_text_t &profile)
+{
+	if (!read_file(path, profile.data) || profile.data.compare(0, 8, "SiiNunit") != 0) return false;
+	profile.newline = detect_newline(profile.data);
+	profile.lines = split_lines(profile.data, profile.newline);
+	return true;
+}
+
+// Writes the edited lines if anything changed, keeping the untouched file as .padfix.bak.
+int save_profile(const wchar_t *const path, const profile_text_t &profile)
+{
+	const std::string result = join_lines(profile.lines, profile.newline);
+	if (result == profile.data) return FIX_NOTHING_TO_DO;
+	if (!CopyFileW(path, (std::wstring(path) + L".padfix.bak").c_str(), FALSE)) return FIX_ERROR;
+	return write_file_replace(path, result) ? FIX_CHANGED : FIX_ERROR;
+}
+
 // Retain a native steering alias for the game's rumble target, but read the
 // merged SDK axis in the actual steering mix. No synthesized rumble or input
-// hooks are involved. Apply explicitly with the game closed, then validate in-game.
-int fix_merged_rumble(const wchar_t *const path, DWORD slot)
+// hooks are involved. Edits lines in memory; FIX_ERROR means leave the file alone.
+int route_merged_rumble(std::vector<std::string> &lines, DWORD slot)
 {
 	if (slot >= XUSER_MAX_COUNT) return FIX_ERROR;
-	std::string data;
-	if (!read_file(path, data) || data.compare(0, 8, "SiiNunit") != 0) return FIX_ERROR;
-	const std::string newline = detect_newline(data);
-	std::vector<std::string> lines = split_lines(data, newline);
 	std::vector<device_line_t> devices;
 	std::string sdk_axis;
 	const std::string native_id = "xinput.xinput_gamepad_" + std::to_string(slot + 1);
@@ -491,10 +517,161 @@ int fix_merged_rumble(const wchar_t *const path, DWORD slot)
 	lines[mix_line].replace(mix_start, mix_end - mix_start, expression);
 	lines[steer_line].replace(steer_start, steer_end - steer_start, native->alias + ".x");
 	if (native->device.empty()) lines[native->line].replace(native->value_start, native->value_end - native->value_start, native_id);
-	const std::string result = join_lines(lines, newline);
-	if (result == data) return FIX_NOTHING_TO_DO;
-	if (!CopyFileW(path, (std::wstring(path) + L".padfix.bak").c_str(), FALSE)) return FIX_ERROR;
-	return write_file_replace(path, result) ? FIX_CHANGED : FIX_ERROR;
+	return FIX_NOTHING_TO_DO;
+}
+
+// Apply explicitly with the game closed, then validate in-game.
+int fix_merged_rumble(const wchar_t *const path, DWORD slot)
+{
+	if (slot >= XUSER_MAX_COUNT) return FIX_ERROR;
+	profile_text_t profile;
+	if (!load_profile(path, profile)) return FIX_ERROR;
+	if (route_merged_rumble(profile.lines, slot) == FIX_ERROR) return FIX_ERROR;
+	return save_profile(path, profile);
+}
+
+// The `...` value after `key` on a line.
+bool find_backtick_value(const std::string &line, const std::string &key, size_t &start, size_t &end)
+{
+	const size_t pos = line.find(key);
+	if (pos == std::string::npos) return false;
+	start = pos + key.size();
+	end = line.find('`', start);
+	return end != std::string::npos;
+}
+
+std::string find_padfix_alias(const std::vector<std::string> &lines)
+{
+	for (size_t i = 0; i < lines.size(); ++i) {
+		device_line_t d;
+		if (parse_device_line(lines[i], i, d) && d.device == PADFIX_DEVICE) return d.alias;
+	}
+	return std::string();
+}
+
+bool get_constant(const std::vector<std::string> &lines, const std::string &name, double &value)
+{
+	const std::string key = "\"constant " + name + " ";
+	for (const std::string &line : lines) {
+		const size_t pos = line.find(key);
+		if (pos == std::string::npos) continue;
+		char *end = NULL;
+		const char *const text = line.c_str() + pos + key.size();
+		value = strtod(text, &end);
+		return end != text;
+	}
+	return false;
+}
+
+bool set_constant(std::vector<std::string> &lines, const std::string &name, const std::string &value)
+{
+	const std::string key = "\"constant " + name + " ";
+	for (std::string &line : lines) {
+		const size_t pos = line.find(key);
+		if (pos == std::string::npos) continue;
+		const size_t start = pos + key.size();
+		const size_t end = line.find('"', start);
+		if (end == std::string::npos) return false;
+		line.replace(start, end - start, value);
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Choosing "Keyboard + Stable Gamepad" applies the game's generic DirectInput
+ * preset to the SDK device: steering on `x` (the X button on Stable Gamepad),
+ * throttle/brake on the right stick with the brake read as a full-range axis
+ * (so a released trigger brakes halfway), camera on z/rz (absent) and the hat
+ * as pov1_*. The stick then does nothing. That exact preset, recognized by
+ * steering on the X button, is converted to the pad's own axes; any input bound
+ * to something else is the user's choice and stays. Numbered buttons (b1..b15)
+ * have no counterpart and are left for the user to bind.
+ */
+int convert_generic_preset(std::vector<std::string> &lines)
+{
+	const std::string alias = find_padfix_alias(lines);
+	if (alias.empty()) return FIX_NOTHING_TO_DO;
+	bool preset = false;
+	for (const std::string &line : lines) {
+		size_t start, end;
+		if (find_backtick_value(line, "\"input j_steer `", start, end) && line.compare(start, end - start, alias + ".x") == 0) preset = true;
+	}
+	if (!preset) return FIX_NOTHING_TO_DO;
+
+	struct preset_axis_t { const char *input; const char *preset; const char *pad; };
+	static const preset_axis_t AXES[] = {
+		{"j_steer", "x", "lx"}, {"j_throttle", "ry", "rt"}, {"j_brake", "rx", "lt"},
+		{"j_look_lr", "z", "rx"}, {"j_look_ud", "rz", "ry"},
+	};
+	static const char *const HAT[][2] = {
+		{"pov1_up", "dpad_up"}, {"pov1_down", "dpad_down"}, {"pov1_left", "dpad_left"}, {"pov1_right", "dpad_right"},
+	};
+	bool throttle = false, brake = false;
+	for (std::string &line : lines) {
+		for (const preset_axis_t &axis : AXES) {
+			size_t start, end;
+			if (!find_backtick_value(line, std::string("\"input ") + axis.input + " `", start, end)) continue;
+			if (line.compare(start, end - start, alias + "." + axis.preset) == 0) {
+				line.replace(start, end - start, alias + "." + axis.pad);
+				throttle = throttle || strcmp(axis.input, "j_throttle") == 0;
+				brake = brake || strcmp(axis.input, "j_brake") == 0;
+			}
+			break;
+		}
+		if (line.find("\"mix ") != std::string::npos) {
+			for (const auto &hat : HAT) replace_input_reference(line, alias + "." + hat[0], alias + "." + hat[1]);
+		}
+	}
+	// Triggers rest at 0: read them as 0..1 pedals, not -1..1 axes.
+	if (throttle) set_constant(lines, "c_jzthrottle", "1.000000");
+	if (brake) set_constant(lines, "c_jzbrake", "1.000000");
+	return FIX_CHANGED;
+}
+
+/**
+ * Stick steering belongs in the game's relative regime (c_relatsteer 1: the
+ * stick sets how fast the wheel turns, scaled by c_rsteersens), as for every
+ * gamepad. The generic preset and Quick Setup choose the absolute regime meant
+ * for wheels and mice (scaled by c_asteersens), where a small stick movement
+ * throws the wheel to full lock. Only profiles whose steering reads Stable
+ * Gamepad's stick are switched; wheel, mouse and keyboard steering keep theirs.
+ */
+int use_relative_steering(std::vector<std::string> &lines)
+{
+	const std::string alias = find_padfix_alias(lines);
+	if (alias.empty()) return FIX_NOTHING_TO_DO;
+	const std::string stick = alias + ".lx";
+	std::string steer_input, mix;
+	for (const std::string &line : lines) {
+		size_t start, end;
+		if (find_backtick_value(line, "\"input j_steer `", start, end)) steer_input = line.substr(start, end - start);
+		if (find_backtick_value(line, "\"mix steering `", start, end)) mix = line.substr(start, end - start);
+	}
+	std::string probe = mix;
+	const bool reads_stick = replace_input_reference(probe, stick, stick) > 0
+		|| (steer_input == stick && replace_input_reference(probe, "j_steer", "j_steer") > 0);
+	double regime = 1;
+	if (!reads_stick || !get_constant(lines, "c_relatsteer", regime) || regime != 0) return FIX_NOTHING_TO_DO;
+	set_constant(lines, "c_relatsteer", "1.000000");
+	return FIX_CHANGED;
+}
+
+/**
+ * The Stable Gamepad profile repair used by the installer, by
+ * --fix-broadcast-rumble and by the helper after each session: converts the
+ * game's generic preset, keeps the stable rumble target with merged steering,
+ * and selects relative stick steering. One backup of the untouched file; a
+ * custom steering mix leaves the whole file alone.
+ */
+int fix_stable_gamepad_profile(const wchar_t *const path)
+{
+	profile_text_t profile;
+	if (!load_profile(path, profile)) return FIX_ERROR;
+	convert_generic_preset(profile.lines);
+	if (route_merged_rumble(profile.lines, 0) == FIX_ERROR) return FIX_ERROR;
+	use_relative_steering(profile.lines);
+	return save_profile(path, profile);
 }
 
 // connected_mask: bits 0-3 = XInput slots 1-4, bits 4-7 = PlayStation pads.
@@ -532,7 +709,7 @@ void fix_broadcast_in_profiles(const wchar_t *global_controls)
 		if (search == INVALID_HANDLE_VALUE) continue;
 		do {
 			if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && found.cFileName[0] != L'.')
-				fix_merged_rumble((base + found.cFileName + L"\\controls.sii").c_str(), 0);
+				fix_stable_gamepad_profile((base + found.cFileName + L"\\controls.sii").c_str());
 		} while (FindNextFileW(search, &found));
 		FindClose(search);
 	}
@@ -684,7 +861,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 		return argc >= 3 ? fix_merged_steering(argv[2]) : FIX_ERROR;
 	}
 	if (wcscmp(argv[1], L"--fix-broadcast-rumble") == 0) {
-		return argc == 3 ? fix_merged_rumble(argv[2], 0) : FIX_ERROR;
+		return argc == 3 ? fix_stable_gamepad_profile(argv[2]) : FIX_ERROR;
 	}
 	if (wcscmp(argv[1], L"--fix-merged-rumble") == 0) {
 		if (argc != 4 || wcslen(argv[3]) != 1 || argv[3][0] < L'1' || argv[3][0] > L'4') return FIX_ERROR;

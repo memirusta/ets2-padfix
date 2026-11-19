@@ -80,13 +80,18 @@ padfix_helper.exe --fix-broadcast-rumble "<profile>\controls.sii"
 
 The installer does this for supported existing profiles. The command retains `input j_steer` on the stable in-game XInput slot 1 and keeps the actual `mix steering` on the merged SDK axis. It preserves the steering curve, inversion, dead zone, centering, other bindings and FFB gain. It uses an existing matching alias or an empty joystick alias, backs up changes, and is idempotent. Unsupported custom mixes and wheel/keyboard steering are preserved.
 
+The same command also repairs what the game itself writes for Stable Gamepad:
+
+- **The game's default preset.** The game does not know Stable Gamepad is a gamepad, so choosing "Keyboard + Stable Gamepad" gives it the generic DirectInput preset: steering on `x` (the X button here), throttle/brake on the right stick with the brake read as a full-range axis, camera on `z`/`rz` (absent) and the hat as `pov1_*`. The stick then steers nothing. That exact preset is converted to the pad's own axes (steering `lx`, throttle `rt`, brake `lt`, camera `rx`/`ry`, hat to D-pad, triggers read as 0..1 pedals). Inputs bound to anything else are left as they are, and numbered buttons (`b1`...) are left for you to bind.
+- **Relative steering.** When steering reads Stable Gamepad's stick, `c_relatsteer` is set to 1, the relative steering regime the game uses for gamepads (the stick sets how fast the wheel turns, scaled by `c_rsteersens`). The preset and the in-game Quick Setup choose the absolute regime meant for wheels and mice, where a small stick movement throws the wheel to full lock. Wheel, mouse and keyboard steering keep their regime.
+
 Physical targets are refreshed on connection changes and at least twice per second. Root-backed virtual controllers are excluded when Windows can identify them unambiguously. Missing identity information or a physical/virtual VID/PID collision is treated as unknown and remains eligible, so a real Xbox controller is not accidentally excluded. Virtual-only endpoints may receive motor commands in this fallback case; they do not have physical motors.
 
 Output stops on the SDK's pause/menu event, XInput disable, loss of game focus, game exit, or a one-second producer watchdog timeout. After an interruption, a fresh native command is required; a held stale command is never replayed on resume. Motor write failures do not prevent delivery to other targets.
 
 The bridge uses bundled MinHook 1.3.4 to intercept XInput 1.4 calls in the game process. Raw input and real motor writes stay in the external helper. System DLL files and controller firmware are unchanged. Update both plugin and helper together. No additional driver is installed. Only one active ETS2/ATS session is supported, as with the shared input helper. Other XInput interception layers and multiplayer mods have not been validated.
 
-If the in-game controller UI regenerates the steering mix after rebinding, the helper restores supported padfix steering/rumble routing after the game exits. The legacy slot-specific `--fix-merged-rumble` and `--fix-steering` utilities are retained; use `--fix-broadcast-rumble` with the current broadcast plugin.
+If the in-game controller UI regenerates the steering mix after rebinding, or Quick Setup or the input type preset is applied, the helper restores supported padfix steering/rumble routing, the preset conversion and relative steering after the game exits. The game keeps its settings in memory while it runs, so the repaired profile takes effect from the next launch. The legacy slot-specific `--fix-merged-rumble` and `--fix-steering` utilities are retained; use `--fix-broadcast-rumble` with the current broadcast plugin.
 
 SCS documents aliases and mix expressions in its [advanced input configuration reference](https://modding.scssoft.com/wiki/Documentation/Engine/Advanced_input_configuration). MinHook's license and upstream details are under `third_party/minhook/` and included in release archives.
 
@@ -112,7 +117,8 @@ Example in `controls.sii`: ``device joy `sdk.padfix` `` and ``mix horn `keyboard
    Add `--files-only` to copy the plugin without changing the game's settings or your profiles.
 4. In Steam, right-click the game > **Properties > Controller** > **Disable Steam Input**.
 5. Start the game and continue past the "advanced SDK features" warning (it appears on every launch while the plugin is installed).
-6. Go to **Options > Controls > Input type: "Keyboard + Stable Gamepad"**, then bind your buttons under **Keys & Buttons**.
+6. Go to **Options > Controls > Input type: "Keyboard + Stable Gamepad"**.
+7. Close the game and start it again once. When the game closes, padfix converts the game's default bindings to Stable Gamepad (steering, pedals, camera). Then bind your buttons under **Keys & Buttons**.
 
 The installer adds these files:
 ```

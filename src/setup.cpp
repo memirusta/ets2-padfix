@@ -498,7 +498,7 @@ void configure_game(const install_t &install, const std::wstring &helper, const 
 			}
 			const int code = run_helper(helper, L"--fix-broadcast-rumble", controls);
 			if (code == FIX_CHANGED) {
-				print(L"  Stable rumble target and merged steering configured.", GREEN);
+				print(L"  Stable Gamepad profile repaired (steering, pedals, rumble target).", GREEN);
 			}
 			else if (code != FIX_NOTHING_TO_DO) {
 				print(L"  Custom profile not changed; configure rumble manually if needed.", YELLOW);
@@ -637,7 +637,9 @@ int wmain(int argc, wchar_t **argv)
 		print(L"Next steps:", CYAN);
 		print(L"  1. In Steam, open the game's Properties > Controller and disable Steam Input.");
 		print(L"  2. Start the game and continue past the \"advanced SDK features\" warning.");
-		print(L"  3. Options > Controls > Input type: choose \"Keyboard + Stable Gamepad\" and bind your buttons.");
+		print(L"  3. Options > Controls > Input type: choose \"Keyboard + Stable Gamepad\".");
+		print(L"  4. Close the game and start it again once. When the game closes, padfix converts the game's");
+		print(L"     default bindings to Stable Gamepad (steering, pedals, camera). Then bind your buttons.");
 	}
 	return finish(failed ? 1 : 0);
 }
