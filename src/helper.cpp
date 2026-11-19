@@ -6,14 +6,18 @@
  * Usage:
  *   padfix_helper.exe <game pid> [global_controls.sii path]
  *     Serves the game until it exits, then makes sure the padfix device is not
- *     hidden in the controls menu (see fix_whitelist). After a broadcast session,
- *     supported padfix profiles retain stable rumble targeting and merged steering.
+ *     hidden in the controls menu (see fix_whitelist). PlayStation DirectInput
+ *     bindings left in a profile move to the padfix device (steering curve kept).
+ *     After a broadcast session, supported padfix profiles retain stable rumble
+ *     targeting and merged steering.
  *   padfix_helper.exe --fix-whitelist <global_controls.sii path>
  *   padfix_helper.exe --fix-steering <controls.sii path> [XInput slot 1-4]
  *   padfix_helper.exe --fix-merged-steering <controls.sii path>
  *   padfix_helper.exe --fix-merged-rumble <controls.sii path> <XInput slot 1-4>
  *   padfix_helper.exe --fix-broadcast-rumble <controls.sii path>
+ *   padfix_helper.exe --fix-playstation-bindings <controls.sii path> [--steer-func F] [--steer-dz D]
  *     Opt-in profile fixes only. Exit code 0 = unchanged, 2 = fixed, 1 = error.
+ *     --fix-playstation-bindings prints dropped or unconverted bindings on stdout.
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -31,6 +35,7 @@
 #include "controller_merge.h"
 #include "controller_sources.h"
 #include "playstation_hid.h"
+#include "playstation_profile.h"
 #include "profile_text.h"
 #include "rumble_output.h"
 
@@ -430,6 +435,51 @@ int fix_merged_rumble(const wchar_t *const path, DWORD slot)
 	return write_file_replace(path, result) ? FIX_CHANGED : FIX_ERROR;
 }
 
+// Writes report lines to stdout. A GUI-subsystem program only has one when the
+// caller redirected it (padfix_setup.exe does); otherwise the caller's console is used.
+void print_report(const std::vector<std::string> &report)
+{
+	if (report.empty()) return;
+	HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+	bool attached = false;
+	if (! out || out == INVALID_HANDLE_VALUE) {
+		if (! AttachConsole(ATTACH_PARENT_PROCESS)) return;
+		attached = true;
+		out = CreateFileW(L"CONOUT$", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+	}
+	if (out != INVALID_HANDLE_VALUE) {
+		for (const std::string &line : report) {
+			const std::string text = line + "\r\n";
+			DWORD written = 0;
+			WriteFile(out, text.data(), static_cast<DWORD>(text.size()), &written, NULL);
+		}
+	}
+	if (attached) {
+		if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
+		FreeConsole();
+	}
+}
+
+/** Moves DualShock 4 / DualSense DirectInput bindings onto Stable Gamepad
+ * (see playstation_profile.h). Must run while the game is not running.
+ */
+int fix_playstation_bindings(const wchar_t *const path, const ps_profile_options_t &options, const bool report)
+{
+	std::string data;
+	if (! read_file(path, data) || data.compare(0, 8, "SiiNunit") != 0) return FIX_ERROR;
+	const ps_profile_result_t result = convert_playstation_profile(data, options);
+	if (report) print_report(result.report);
+	if (result.error) return FIX_ERROR;
+	if (! result.changed) return FIX_NOTHING_TO_DO;
+	// The broadcast fix that usually follows replaces .padfix.bak, so the
+	// pre-conversion profile is also kept under a name only this fix writes.
+	if (! CopyFileW(path, (std::wstring(path) + L".padfix.bak").c_str(), FALSE)
+		|| ! CopyFileW(path, (std::wstring(path) + L".padfix-playstation.bak").c_str(), FALSE)) {
+		return FIX_ERROR;
+	}
+	return write_file_replace(path, result.text) ? FIX_CHANGED : FIX_ERROR;
+}
+
 // connected_mask: bits 0-3 = XInput slots 1-4, bits 4-7 = PlayStation pads.
 void publish_state(padfix_state_t *state, const XINPUT_GAMEPAD &pad, const uint32_t connected_mask)
 {
@@ -452,8 +502,12 @@ void publish_state(padfix_state_t *state, const pad_aggregator_t &pads)
 	publish_state(state, pads.gamepad(), pads.connected_slots);
 }
 
-void fix_broadcast_in_profiles(const wchar_t *global_controls)
+// Runs with the game closed. PlayStation bindings are converted in every profile
+// (never touching the steering curve); broadcast routing only after a broadcast session.
+void fix_profiles_after_session(const wchar_t *global_controls, const bool broadcast)
 {
+	ps_profile_options_t keep_curve;
+	keep_curve.steer_func = keep_curve.steer_dz = PS_STEER_KEEP;
 	std::wstring root = global_controls;
 	const size_t slash = root.find_last_of(L'\\');
 	if (slash == std::wstring::npos) return;
@@ -464,8 +518,11 @@ void fix_broadcast_in_profiles(const wchar_t *global_controls)
 		HANDLE search = FindFirstFileW((base + L"*").c_str(), &found);
 		if (search == INVALID_HANDLE_VALUE) continue;
 		do {
-			if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && found.cFileName[0] != L'.')
-				fix_merged_rumble((base + found.cFileName + L"\\controls.sii").c_str(), 0);
+			if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && found.cFileName[0] != L'.') {
+				const std::wstring controls = base + found.cFileName + L"\\controls.sii";
+				fix_playstation_bindings(controls.c_str(), keep_curve, false);
+				if (broadcast) fix_merged_rumble(controls.c_str(), 0);
+			}
 		} while (FindNextFileW(search, &found));
 		FindClose(search);
 	}
@@ -595,7 +652,7 @@ int serve_game(const DWORD game_pid, const wchar_t *const global_controls)
 
 	if (wait_result == WAIT_OBJECT_0 && global_controls && *global_controls) {
 		fix_whitelist(global_controls);
-		if (saw_producer) fix_broadcast_in_profiles(global_controls);
+		fix_profiles_after_session(global_controls, saw_producer);
 	}
 
 	ReleaseMutex(mutex);
@@ -618,6 +675,19 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 	}
 	if (wcscmp(argv[1], L"--fix-broadcast-rumble") == 0) {
 		return argc == 3 ? fix_merged_rumble(argv[2], 0) : FIX_ERROR;
+	}
+	if (wcscmp(argv[1], L"--fix-playstation-bindings") == 0) {
+		if (argc < 3 || argc % 2 == 0) return FIX_ERROR;
+		ps_profile_options_t options;
+		for (int i = 3; i + 1 < argc; i += 2) {
+			wchar_t *end = NULL;
+			const double value = wcstod(argv[i + 1], &end);
+			if (end == argv[i + 1] || *end || value < 0) return FIX_ERROR;
+			if (wcscmp(argv[i], L"--steer-func") == 0 && value <= 2) options.steer_func = value;
+			else if (wcscmp(argv[i], L"--steer-dz") == 0 && value < 1) options.steer_dz = value;
+			else return FIX_ERROR;
+		}
+		return fix_playstation_bindings(argv[2], options, true);
 	}
 	if (wcscmp(argv[1], L"--fix-merged-rumble") == 0) {
 		if (argc != 4 || wcslen(argv[3]) != 1 || argv[3][0] < L'1' || argv[3][0] > L'4') return FIX_ERROR;

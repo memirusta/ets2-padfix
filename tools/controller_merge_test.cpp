@@ -4,6 +4,7 @@
 #include <math.h>
 #include "../src/helper.cpp"
 #include "scssdk_input.h"
+#include "playstation_profile_fixture.h"
 
 unsigned checks = 0;
 void check(bool ok, const char *message)
@@ -120,6 +121,72 @@ void rumble_case(const std::string &native_device, const std::string &axis,
 	}
 	DeleteFileW(path);
 	DeleteFileW((std::wstring(path) + L".padfix.bak").c_str());
+}
+
+// The field profile: DualShock 4 DirectInput names on sdk.padfix, then the
+// installer's broadcast step on top of the converted profile.
+void playstation_case(const char *newline)
+{
+	wchar_t temp[MAX_PATH], path[MAX_PATH];
+	GetCurrentDirectoryW(MAX_PATH, temp);
+	check(GetTempFileNameW(temp, L"pfx", 0, path) != 0, "create PlayStation fixture");
+	const std::wstring backup_path = std::wstring(path) + L".padfix.bak";
+	const std::wstring original_path = std::wstring(path) + L".padfix-playstation.bak";
+	const std::string nl = newline;
+	const std::string before = sii_profile(ds4_field_config(), nl);
+	check(write_file_replace(path, before), "write PlayStation fixture");
+	check(fix_playstation_bindings(path, ps_profile_options_t(), false) == FIX_CHANGED, "PlayStation bindings converted");
+	std::string after, backup;
+	check(read_file(path, after) && after == sii_profile(ds4_field_expected(), nl), "PlayStation conversion result");
+	check(read_file(backup_path.c_str(), backup) && backup == before, "PlayStation exact backup");
+	check(fix_playstation_bindings(path, ps_profile_options_t(), false) == FIX_NOTHING_TO_DO, "PlayStation conversion idempotent");
+
+	check(fix_merged_rumble(path, 0) == FIX_CHANGED, "broadcast setup after conversion");
+	std::string routed;
+	check(read_file(path, routed), "read broadcast result");
+	check(routed.find("\"device joy2 `xinput.xinput_gamepad_1`\"") != std::string::npos, "native rumble target on joy2");
+	check(routed.find("\"input j_steer `joy2.x`\"") != std::string::npos, "j_steer on the native slot");
+	check(routed.find("\"mix steering `pow(normalize(abs(joy.lx?0), c_steer_dz), 1 + c_steer_func * 0.5) * sign(joy.lx?0)`\"") != std::string::npos, "steering mix reads padfix lx");
+	check(routed.find("\"constant c_steer_func 1.000000\"") != std::string::npos, "broadcast keeps the steering curve");
+	check(fix_playstation_bindings(path, ps_profile_options_t(), false) == FIX_NOTHING_TO_DO, "broadcast profile is not PlayStation-converted again");
+	check(fix_merged_rumble(path, 0) == FIX_NOTHING_TO_DO, "broadcast idempotent after conversion");
+	std::string original;
+	check(read_file(original_path.c_str(), original) && original == before, "pre-conversion profile survives the broadcast backup");
+
+	// Unknown inputs: error, file and backup untouched.
+	DeleteFileW(backup_path.c_str());
+	DeleteFileW(original_path.c_str());
+	std::vector<std::string> odd = ds4_field_config();
+	odd.push_back("mix odd `joy.slider1?0`");
+	const std::string odd_text = sii_profile(odd, nl);
+	check(write_file_replace(path, odd_text), "write unknown-input fixture");
+	check(fix_playstation_bindings(path, ps_profile_options_t(), false) == FIX_ERROR, "unknown input is an error");
+	std::string unchanged;
+	check(read_file(path, unchanged) && unchanged == odd_text, "unknown input writes nothing");
+	check(GetFileAttributesW(backup_path.c_str()) == INVALID_FILE_ATTRIBUTES
+		&& GetFileAttributesW(original_path.c_str()) == INVALID_FILE_ATTRIBUTES, "unknown input makes no backup");
+	DeleteFileW(path);
+	DeleteFileW(backup_path.c_str());
+	DeleteFileW(original_path.c_str());
+}
+
+void playstation_mask_case()
+{
+	ps_pads_t pads;
+	const DWORD now = 5000;
+	// Eight open devices; only the last four report.
+	for (size_t i = 0; i < PS_MAX_PADS * 2; ++i) {
+		std::unique_ptr<ps_device_t> device(new ps_device_t());
+		device->has_report = i >= PS_MAX_PADS;
+		device->last_report = now;
+		pads.devices.push_back(std::move(device));
+	}
+	check(pads.mask(now) == 0xF, "mask counts reporting pads beyond the first four devices");
+	pads.devices[0]->has_report = true;
+	check(pads.mask(now) == 0xF, "mask has at most four bits");
+	check(pads.mask(now + PS_STALE_MS) == 0, "stale pads leave the mask");
+	pads.devices.clear();
+	check(pads.mask(now) == 0, "no pads, empty mask");
 }
 
 scs_input_device_t sdk_device;
@@ -305,6 +372,8 @@ int main(int argc, char **argv)
 		rumble_case("xinput.xinput_gamepad_2", "joy2.x", mix, "joy2.x", mix, 1, FIX_NOTHING_TO_DO, nl, true, false);
 		rumble_case("xinput.xinput_gamepad_2", "joy.lx", mix, "joy.lx", mix, 4, FIX_ERROR, nl);
 	}
+	for (const char *nl : newlines) playstation_case(nl);
+	playstation_mask_case();
 	std::string tokens = "j_steer_c?1 + other.j_steer?0 + j_steer2?0 - j_steer?0 + j_steer?0";
 	check(replace_input_reference(tokens, "j_steer", "joy.lx") == 2, "replace complete input identifiers only");
 	check(tokens == "j_steer_c?1 + other.j_steer?0 + j_steer2?0 - joy.lx?0 + joy.lx?0", "centering flags and unrelated identifiers preserved");
